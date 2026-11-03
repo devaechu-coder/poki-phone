@@ -56,6 +56,7 @@ public class MCphone implements ModInitializer {
             com.november.mcphone.core.net.RequestThrottle.onPlayerLoggedOut(id);
             com.november.mcphone.feature.music.DiscService.onPlayerLoggedOut(id);
             com.november.mcphone.feature.chat.ChatImageUploads.onPlayerLoggedOut(id);
+            com.november.mcphone.feature.sns.net.SnsServer.onLogout(id);
         });
 
         // 开服时清掉没有消息认领的图片文件（理由见 ChatImageStore.sweepOrphans）
@@ -87,6 +88,7 @@ public class MCphone implements ModInitializer {
                     com.november.mcphone.core.script.server.economy.EconomyCommand.register(dispatcher);
                     // 脚本后端的 OP 管理命令（S17，§14.4）：部署/授权的 Stage 1 审批入口
                     com.november.mcphone.core.script.server.ScriptAdminCommand.register(dispatcher);
+                    com.november.mcphone.feature.sns.SnsCommand.register(dispatcher);
                 });
 
         // 手机替卡槽里的终端供电。漏了它的症状是"终端在手机里会没电"，见 TerminalCharger。

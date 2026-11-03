@@ -7,19 +7,21 @@ import net.minecraft.network.chat.Component;
 
 /** 消息与联系人共用底栏。发现、个人页只预留，不产生导航。 */
 final class ChatNavigationBar {
-    enum Page { CHATS(0), CONTACTS(1), PROFILE(3);
+    enum Page { CHATS(0), CONTACTS(1), DISCOVER(2), PROFILE(3);
         final int column; Page(int column) { this.column=column; }
     }
     private static final String[] KEYS = {"chats", "contacts", "discover", "profile"};
     private static final ChatUi.Icon[] ICONS = {
             ChatUi.Icon.CHAT, ChatUi.Icon.CONTACTS, ChatUi.Icon.DISCOVER, ChatUi.Icon.PROFILE};
     private ChatLayout.Rect bounds;
+    /** 포키: 둘러보기(SNS) 탭을 눌렀다. PhoneScreen 이 ChatFeed.consumeDiscover() 로 가져감 */
+    static boolean discoverClicked;
     void clear() { bounds = null; }
     Page click(double mx, double my, int button) {
         if (button != 0 || bounds == null || !bounds.contains(mx, my)) return null;
         int column = 0;
         while (column < 3 && mx >= bounds.x() + bounds.width() * (column + 1) / 4) column++;
-        return switch(column) { case 0 -> Page.CHATS;case 1 -> Page.CONTACTS;case 3 -> Page.PROFILE;default -> null; };
+        return switch(column) { case 0 -> Page.CHATS;case 1 -> Page.CONTACTS;case 2 -> { discoverClicked = true; yield Page.DISCOVER; } case 3 -> Page.PROFILE;default -> null; };
     }
     void render(GuiGraphics g, Font font, int x, int y, int w, Page active) {
         bounds = new ChatLayout.Rect(x, y, w, ChatLayout.TAB_HEIGHT);
@@ -28,7 +30,7 @@ final class ChatNavigationBar {
             int left = x + w * i / 4, right = x + w * (i + 1) / 4;
             float centerX = (left + right) / 2f;
             int color = i == active.column ? ChatUi.accent()
-                    : (i != 2 ? FontPalette.body() : FontPalette.dim());
+                    : FontPalette.body();
             ChatUi.centeredIcon(g, ICONS[i], centerX, y + ChatLayout.TAB_ICON_TOP, color);
             String label = ChatUi.truncate(font,
                     Component.translatable("mcphone.chat.layout." + KEYS[i]).getString(),

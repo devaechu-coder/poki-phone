@@ -128,7 +128,7 @@ public final class PhoneSession {
     /** 这一页属于哪个 App；null 表示不属于任何可续开的 App（主屏、设置、商店……） */
     private static ResourceLocation appOf(PhoneScreen.Mode mode) {
         return switch (mode) {
-            case CHAT, CHAT_PROFILE, CHAT_CONTACTS, CHAT_NEW_FRIENDS, CHAT_ADD_CONTACT, CHAT_CONVERSATION, CHAT_GROUP_CONVERSATION, CHAT_GROUP_CREATE, CHAT_GROUP_DETAILS -> CHAT_APP;
+            case CHAT, CHAT_PROFILE, CHAT_CONTACTS, CHAT_NEW_FRIENDS, CHAT_ADD_CONTACT, CHAT_CONVERSATION, CHAT_GROUP_CONVERSATION, CHAT_GROUP_CREATE, CHAT_GROUP_DETAILS, CHAT_FEED -> CHAT_APP;
             case READER -> READER_APP;
             default -> null;
         };

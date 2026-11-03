@@ -138,6 +138,8 @@ public final class NetworkHandler {
         // 群协议追加在所有旧包之后，保持 Forge 旧包的整数 ID。
         com.november.mcphone.feature.chat.group.net.GroupNetworking.register();
         com.november.mcphone.feature.chat.profile.net.ProfileNetworking.register();
+        // 포키 SNS: 맨 끝에 추가
+        com.november.mcphone.feature.sns.net.SnsNetworking.register();
     }
 
     //  处理函数

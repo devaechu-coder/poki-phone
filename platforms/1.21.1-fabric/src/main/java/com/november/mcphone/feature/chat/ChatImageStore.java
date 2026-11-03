@@ -192,7 +192,9 @@ public final class ChatImageStore {
     public static void onServerStarted(MinecraftServer server) {
         // 聊天记录是 SavedData，只能在主线程碰；扫目录与删文件是磁盘上的事，挪去后台。
         // 启动这一刻的引用集合就是全部：那时还没有人连进来，产生不了新的图
-        Set<UUID> referenced = ChatData.get(server).referencedImages();
+        Set<UUID> referenced = new java.util.HashSet<>(ChatData.get(server).referencedImages());
+        // 포키 SNS 글에 붙은 사진도 지우면 안 됨
+        referenced.addAll(com.november.mcphone.feature.sns.SnsData.get(server).referencedImages());
         Util.backgroundExecutor().execute(() -> sweepOrphans(server, referenced));
     }
 

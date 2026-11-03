@@ -147,6 +147,7 @@ public final class ChatImageSender {
     /** 刚发上去的那张图的字节，等回声带着 id 回来时塞进缓存，见 {@link #onNewMessage} */
     private static byte[] pendingPng;
     private static UUID pendingGroup, pendingRequest;
+    private static boolean pendingSns;
 
     /** 这会儿有一张正在发，或者刚发完还在冷却。再点的会排队，见 {@link #send} */
     public static boolean isBusy() {
@@ -178,6 +179,15 @@ public final class ChatImageSender {
         send(peer, photo, false);
     }
     public static void sendGroup(UUID group, Path photo) { send(group, photo, true); }
+    /** 포키 SNS 글 사진. 서버가 글 자리를 잡아 준 뒤에 부른다 */
+    public static void sendSns(Path photo) { send(com.november.mcphone.feature.sns.net.SnsWire.PEER, photo, false); }
+
+    /** 포키 SNS 글이 끝났다(성공이면 사진 id, 실패면 null) */
+    public static void onSnsResult(UUID image) {
+        if (!pendingSns) return;
+        if (image != null && pendingPng != null) ChatImageCache.seed(image, pendingPng);
+        finish();
+    }
     private static void send(UUID peer, Path photo, boolean group) {
         if (peer == null || photo == null) return;
         // 포키: 포키폰 카메라로 찍은 사진만 (스크린샷·컴퓨터 사진·스티커 막음)
@@ -221,6 +231,7 @@ public final class ChatImageSender {
         pendingPng = null;
         pendingGroup = group ? peer : null;
         pendingRequest = group ? UUID.randomUUID() : null;
+        pendingSns = com.november.mcphone.feature.sns.net.SnsWire.PEER.equals(peer);
 
         // 上限在这里取，不在后台线程里取：那是服主的配置（连上来时同步过来的），
         // 读它是主线程的事，而且一次上传从头到尾该按同一个数来
@@ -444,7 +455,7 @@ public final class ChatImageSender {
      * 由 {@link ChatClientEvents#onMessage} 转调，上传状态不依赖通知是否显示。
      */
     public static void onNewMessage(ChatMessage message) {
-        if (pendingGroup != null) return;
+        if (pendingGroup != null || pendingSns) return;
         if (pendingPng == null) return;
         if (!(message.body() instanceof ImageBody image)) return;
 
@@ -480,6 +491,7 @@ public final class ChatImageSender {
         readyAt = 0L;
         QUEUE.clear();
         pendingGroup = pendingRequest = null;
+        pendingSns = false;
     }
 
     /** 一次上传就此结束（成了、超时了、或者压根没发出去），并开始冷却 */
@@ -488,6 +500,7 @@ public final class ChatImageSender {
         sendingSince = 0L;
         pendingPng = null;
         pendingGroup = pendingRequest = null;
+        pendingSns = false;
         readyAt = System.currentTimeMillis() + COOLDOWN_MS;
     }
 

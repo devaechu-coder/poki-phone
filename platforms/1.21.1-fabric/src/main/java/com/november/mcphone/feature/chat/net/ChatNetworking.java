@@ -196,16 +196,20 @@ public final class ChatNetworking {
      * 配置、手机、好友关系与总大小每片都重查；只有频率额度在第一片消耗一次。
      */
     private static void handleSendImage(SendChatImagePacket packet, ServerPlayer sender) {
-        ImageOutcome gate = ChatService.maySendImage(sender, packet.target());
+        // 포키 SNS: 예약 대상으로 올라온 사진은 채팅이 아니라 SNS 글에 붙는다
+        boolean sns = com.november.mcphone.feature.sns.net.SnsWire.PEER.equals(packet.target());
+        ImageOutcome gate = sns
+                ? (com.november.mcphone.feature.sns.net.SnsServer.maySendImage(sender) ? ImageOutcome.OK : ImageOutcome.NOTHING)
+                : ChatService.maySendImage(sender, packet.target());
         if (gate != ImageOutcome.OK) {
-            tell(sender, gate);
+            snsReject(sender, sns, gate);
             return;
         }
         if (packet.chunkCount() > ChatImage.maxChunks()) {
-            tell(sender, ImageOutcome.TOO_BIG);
+            snsReject(sender, sns, ImageOutcome.TOO_BIG);
             return;
         }
-        if (packet.chunkIndex() == 0) {
+        if (packet.chunkIndex() == 0 && !sns) {
             if (!RequestThrottle.allow(sender, RequestThrottle.Kind.CHAT_IMAGE)) {
                 tell(sender, ImageOutcome.TOO_FAST);
                 return;
@@ -220,11 +224,28 @@ public final class ChatNetworking {
 
         // 服务端不解码图片，但也不能一个字节都不看就转发给别人的解码器
         if (!ChatImageStore.looksLikePng(upload.png())) {
-            tell(sender, ImageOutcome.BROKEN);
+            snsReject(sender, sns, ImageOutcome.BROKEN);
             return;
         }
 
-        storeAndDeliver(sender, upload);
+        if (sns) storeForSns(sender, upload);
+        else storeAndDeliver(sender, upload);
+    }
+
+    private static void snsReject(ServerPlayer sender, boolean sns, ImageOutcome outcome) {
+        if (outcome != ImageOutcome.NOTHING || !sns) tell(sender, outcome);
+        if (sns) com.november.mcphone.feature.sns.net.SnsServer.failPending(sender);
+    }
+
+    /** 포키 SNS 사진: 저장은 뒤에서, 글 완성은 주 스레드에서 */
+    private static void storeForSns(ServerPlayer sender, ChatImageUploads.Assembled upload) {
+        MinecraftServer server = sender.server;
+        Util.backgroundExecutor().execute(() -> {
+            UUID imageId = ChatImageStore.write(server,
+                    ConversationKey.of(sender.getUUID(), com.november.mcphone.feature.sns.net.SnsWire.PEER), upload.png());
+            server.execute(() -> com.november.mcphone.feature.sns.net.SnsServer.onImageStored(
+                    sender, imageId, upload.width(), upload.height()));
+        });
     }
 
     /**
@@ -277,7 +298,10 @@ public final class ChatNetworking {
         List<UUID> allowed = new ArrayList<>();
         java.util.Set<UUID> unique = new java.util.HashSet<>();
         for (UUID id : packet.images()) {
-            if (unique.add(id) && ChatService.mayReadImage(player, packet.peer(), id)) allowed.add(id);
+            boolean ok = com.november.mcphone.feature.sns.net.SnsWire.PEER.equals(packet.peer())
+                    ? com.november.mcphone.feature.sns.net.SnsServer.mayReadImage(player, id)
+                    : ChatService.mayReadImage(player, packet.peer(), id);
+            if (unique.add(id) && ok) allowed.add(id);
         }
         if (allowed.isEmpty()) return;
 
