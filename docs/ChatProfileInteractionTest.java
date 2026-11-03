@@ -11,9 +11,9 @@ public final class ChatProfileInteractionTest {
  public static void main(String[] args) throws Exception {
   var menu=ChatProfileUi.Icon.values();
   check(Arrays.stream(menu).map(i->i.label).toList().equals(List.of("favorites","settings")),"用户要求的菜单顺序");
-  check(Arrays.stream(menu).map(i->i.element).distinct().count()==4,"四个入口使用各自对应的贴图");
+  check(Arrays.stream(menu).map(i->i.element).distinct().count()==2,"两个入口使用各自对应的贴图 (포키: GitHub·후원 뺌)");
   var profile=new ChatProfile();var profileRows=ChatProfileLayout.home(new ChatLayout.Rect(10,20,110,140)).rows();
-  field(profile,"rows",profileRows);var last=profileRows.get(3);profile.mouseClicked(last.x()+5,last.y()+9,0);
+  field(profile,"rows",profileRows);var last=profileRows.get(1);profile.mouseClicked(last.x()+5,last.y()+9,0);
   check(field(profile,"page").toString().equals("SETTINGS"),"重排后第四行实际进入设置，不触发赞助");
   check(profile.back()&&field(profile,"page").toString().equals("HOME"),"设置仍可返回我页");
   field(profile,"rows",profileRows);var first=profileRows.get(0);profile.mouseClicked(first.x()+5,first.y()+9,0);

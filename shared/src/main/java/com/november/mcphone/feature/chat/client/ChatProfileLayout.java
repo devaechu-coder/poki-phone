@@ -12,7 +12,7 @@ final class ChatProfileLayout {
     static Home home(ChatLayout.Rect area) {
         var card = new ChatLayout.Rect(area.x(), area.y(), area.width(), 38);
         var avatar = new ChatLayout.Rect(area.x() + 5, area.y() + 7, 24, 24);
-        var rows = java.util.stream.IntStream.range(0, 4)
+        var rows = java.util.stream.IntStream.range(0, ChatProfileUi.Icon.values().length)
                 .mapToObj(i -> new ChatLayout.Rect(area.x(), area.y() + 44 + i * 20, area.width(), 18))
                 .toList();
         float centerY = card.y() + card.height() / 2f;
