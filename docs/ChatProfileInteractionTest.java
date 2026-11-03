@@ -10,7 +10,7 @@ public final class ChatProfileInteractionTest {
  private static void reply(ProfileWire.Query q,ProfileWire.Status status,String text) { ProfileClientCache.accept(new ProfileWire.Reply(q.request(),q.target(),status,"Player",text)); }
  public static void main(String[] args) throws Exception {
   var menu=ChatProfileUi.Icon.values();
-  check(Arrays.stream(menu).map(i->i.label).toList().equals(List.of("favorites","github","sponsor","settings")),"用户要求的菜单顺序");
+  check(Arrays.stream(menu).map(i->i.label).toList().equals(List.of("favorites","settings")),"用户要求的菜单顺序");
   check(Arrays.stream(menu).map(i->i.element).distinct().count()==4,"四个入口使用各自对应的贴图");
   var profile=new ChatProfile();var profileRows=ChatProfileLayout.home(new ChatLayout.Rect(10,20,110,140)).rows();
   field(profile,"rows",profileRows);var last=profileRows.get(3);profile.mouseClicked(last.x()+5,last.y()+9,0);
