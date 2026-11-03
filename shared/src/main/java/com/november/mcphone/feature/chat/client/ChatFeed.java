@@ -56,6 +56,8 @@ public final class ChatFeed {
 
     private record Hit(ChatLayout.Rect rect, Runnable run) {}
     private final List<Hit> hits = new ArrayList<>();
+    /** 사진 누르면 크게 보기 (포키톡 대화방과 같은 것) */
+    private final ChatImageViewer viewer = new ChatImageViewer();
     private ChatLayout.Rect view;
 
     // ── 바깥(PhoneScreen)과 주고받는 것 ─────────────────────
@@ -83,7 +85,7 @@ public final class ChatFeed {
         uploading = false;
         SnsClientCache.cancel(blocksReq); blocksReq = null; blockedUsers.clear();
         posts.clear(); detail = null; photo = null; loadedPage = -1; more = true;
-        postBox.reset(); commentBox.reset(); navigation.clear(); hits.clear();
+        postBox.reset(); commentBox.reset(); navigation.clear(); hits.clear(); viewer.dismiss();
         status = ""; confirm = ""; scroll = 0; page = Page.FEED; opened = false; pending = null;
     }
 
@@ -96,6 +98,7 @@ public final class ChatFeed {
 
     /** 뒤로. false 면 채팅 첫 화면으로 */
     public boolean back() {
+        if (viewer.dismiss()) return true;
         if (page == Page.FEED) return false;
         if (page == Page.COMPOSE && uploading) return true;
         go(Page.FEED);
@@ -288,6 +291,11 @@ public final class ChatFeed {
         if (showStatus)
             ChatUi.buttonText(g, font, ChatUi.truncate(font, status, w - 4, ChatLayout.META_SCALE), x + w / 2f, bottom - 4.5f, ChatLayout.META_SCALE, ChatUi.accent());
         if (page == Page.FEED) navigation.render(g, font, x, bottom, w, ChatNavigationBar.Page.DISCOVER);
+        if (viewer.isOpen()) {
+            hits.clear();
+            ChatImageCache.beginFrame(SnsWire.PEER);
+            viewer.render(g, font, left, top + statusH, sw, sh - statusH - navH, mx, my);
+        }
         ChatImageCache.flushRequests(SnsWire.PEER);
     }
 
@@ -315,7 +323,11 @@ public final class ChatFeed {
         if (view != null && (y + h < view.y() || y > view.y() + view.height())) return;
         ChatImageCache.declare(id, 1, 0);
         var tex = ChatImageCache.get(id);
-        if (tex != null) { ChatImageViewer.drawImage(g, tex, id, x, y, w, h); return; }
+        if (tex != null) {
+            ChatImageViewer.drawImage(g, tex, id, x, y, w, h);
+            hitIn(new ChatLayout.Rect(x, y, w, h), () -> viewer.open(id));
+            return;
+        }
         g.fill(x, y, x + w, y + h, 0x30000000);
         String hint = ChatImageCache.status(id) == ChatImageCache.Status.GONE ? tr("image_gone") : "…";
         ChatUi.buttonText(g, font, hint, x + w / 2f, y + h / 2f, ChatLayout.META_SCALE, FontPalette.subtle());
@@ -372,6 +384,7 @@ public final class ChatFeed {
             int h = PAD + 13 + shown * lh + (lines.size() > shown ? lh : 0) + (box != null ? box[1] + 3 : 0) + 11;
             var card = new ChatLayout.Rect(x, cy, w, h);
             if (cy + h >= y && cy <= y + viewH) {
+                hitIn(card, () -> openDetail(p));
                 ChatUi.glass(g, ChatGlass.Surface.CARD, x, cy, w, h, card.contains(mx, my) && view.contains(mx, my));
                 int iy = cy + PAD;
                 PlayerAvatar.draw(g, p.author(), x + PAD, iy, 10);
@@ -389,7 +402,6 @@ public final class ChatFeed {
                 ChatUi.label(g, font, heart, x + PAD, iy + 4, ChatLayout.META_SCALE, p.liked() ? 0xFFE8608A : FontPalette.subtle());
                 ChatUi.label(g, font, Component.translatable("mcphone.sns.comments_n", p.commentCount()).getString(),
                         like.x() + like.width() + 6, iy + 4, ChatLayout.META_SCALE, FontPalette.subtle());
-                hitIn(card, () -> openDetail(p));
                 hitIn(like, () -> action(SnsWire.Kind.LIKE, p.id(), null, ""));
             }
             cy += h + CARD_GAP;
@@ -559,6 +571,7 @@ public final class ChatFeed {
 
     public boolean mouseClicked(double mx, double my, int button) {
         if (!opened) return false;
+        if (viewer.mouseClicked(button)) return true;
         if (page == Page.FEED && button == 0) {
             var nav = navigation.click(mx, my, button);
             if (nav != null) {
@@ -585,6 +598,7 @@ public final class ChatFeed {
 
     public boolean mouseScrolled(double mx, double my, double amount) {
         if (!opened || page == Page.COMPOSE) return false;
+        if (viewer.isOpen()) return true;
         scroll -= amount * 14;
         if (scroll < 0) scroll = 0;
         return true;
