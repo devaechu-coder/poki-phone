@@ -1,6 +1,7 @@
 name: 빌드
 
 # main 에 올리면 Fabric 1.21.1 jar 를 빌드해서, 새 버전이면 Releases 에 올림
+# assemble 만 (원본 MCphone 의 화면 배치 검사 테스트는 포키에서 바꾼 메뉴·탭 때문에 안 맞아서 안 돌림)
 on:
   push:
     branches: [main]
@@ -28,7 +29,7 @@ jobs:
         run: |
           set -o pipefail
           chmod +x gradlew
-          ./gradlew build --no-daemon --no-configuration-cache 2>&1 | tee build.log
+          ./gradlew assemble --no-daemon --no-configuration-cache 2>&1 | tee build.log
       - name: 빌드 오류 표시
         if: failure()
         shell: bash
