@@ -1,0 +1,59 @@
+name: 빌드
+
+# main 에 올리면 Fabric 1.21.1 jar 를 빌드해서, 새 버전이면 Releases 에 올림
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: platforms/1.21.1-fabric
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: 빌드
+        shell: bash
+        run: |
+          set -o pipefail
+          chmod +x gradlew
+          ./gradlew build --no-daemon --no-configuration-cache 2>&1 | tee build.log
+      - name: 빌드 오류 표시
+        if: failure()
+        shell: bash
+        run: grep -E "error:|\.java:[0-9]+|FAILURE|What went wrong" -A2 build.log | head -60 | while IFS= read -r l; do echo "::error::$l"; done
+      - name: jar 찾기
+        id: v
+        shell: bash
+        run: |
+          VER=$(grep '^mod_version=' ../../gradle.properties | cut -d= -f2 | tr -d '[:space:]')
+          JAR=$(ls build/libs/*.jar | grep -v -- '-sources\|-dev' | head -1)
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"; echo "jar=$JAR" >> "$GITHUB_OUTPUT"
+          ls -la build/libs
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: pokiphone-${{ steps.v.outputs.ver }}
+          path: platforms/1.21.1-fabric/${{ steps.v.outputs.jar }}
+          retention-days: 3
+      - name: 새 버전이면 릴리스
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="v${{ steps.v.outputs.ver }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then echo "$TAG 있음 — 건너뜀"; else
+            gh release create "$TAG" "${{ steps.v.outputs.jar }}" --title "포키폰 ${{ steps.v.outputs.ver }}" --notes "MCphone 포크 (MIT)"
+          fi
