@@ -98,11 +98,11 @@ public final class PhoneKeys {
         }
     }
 
-    /** 拍照 */
-    public static final Key CAMERA_SHUTTER = new Key("key.mcphone.camera_shutter", GLFW.GLFW_KEY_V);
+    /** 拍照. 포키: V 는 음성채팅과 겹쳐서 Enter 로 (이름을 바꿔 예전 저장값 V 를 무시) */
+    public static final Key CAMERA_SHUTTER = new Key("key.mcphone.camera_shutter_poki", GLFW.GLFW_KEY_ENTER);
 
-    /** 退出相机 */
-    public static final Key CAMERA_EXIT = new Key("key.mcphone.camera_exit", GLFW.GLFW_KEY_X);
+    /** 退出相机. 포키: X 는 다른 모드와 겹쳐서 Backspace 로 */
+    public static final Key CAMERA_EXIT = new Key("key.mcphone.camera_exit_poki", GLFW.GLFW_KEY_BACKSPACE);
 
     /**
      * 开机。手机放在背包或饰品槽里也能直接打开，不必先切到手上。
