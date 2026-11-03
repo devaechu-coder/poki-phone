@@ -160,7 +160,7 @@ public final class GroupService {
     }
     private static GroupMember member(MinecraftServer server, FriendData friends, UUID id) {
         var online = server.getPlayerList().getPlayer(id);
-        String name = online == null ? friends.getName(id) : online.getName().getString();
+        String name = com.november.mcphone.feature.chat.PokiNames.display(id, online == null ? friends.getName(id) : online.getName().getString());
         if (name == null || name.isBlank()) name = id.toString().substring(0, 8);
         name = TextSanitizer.sanitize(name, GroupLimits.NAME_LENGTH);
         return new GroupMember(id, name.isBlank() ? id.toString().substring(0, 8) : name);

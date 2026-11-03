@@ -33,6 +33,7 @@ public final class ProfileServer {
                 introduction = data.book().get(q.target());
                 var online = server.getPlayerList().getPlayer(q.target());
                 String known = online == null ? FriendData.get(server).getName(q.target()) : online.getName().getString();
+                known = com.november.mcphone.feature.chat.PokiNames.display(q.target(), known);
                 name = known == null ? q.target().toString().substring(0, 8) : TextSanitizer.sanitize(known, ProfileWire.NAME_LENGTH);
             }
         } catch (SecurityException e) { status = ProfileWire.Status.FORBIDDEN; }

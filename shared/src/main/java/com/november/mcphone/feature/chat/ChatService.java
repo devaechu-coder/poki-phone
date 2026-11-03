@@ -39,7 +39,7 @@ public final class ChatService {
             boolean isOnline = online != null;
 
             String name = resolveName(server, friends, peer, online);
-            if (isOnline) friends.rememberName(peer, name);
+            if (isOnline) friends.rememberName(peer, ConversationSummary.clampName(com.november.mcphone.platform.PlayerAccess.name(online)));
 
             ChatData.Tail tail = ChatData.tail(ChatDeletionData.get(server).visible(selfId, peer,
                     chat.getMessages(selfId, peer)), peer, read.getLastRead(peer));
@@ -339,7 +339,7 @@ public final class ChatService {
             friends.rememberName(id, name);
 
             if (out.size() >= limit) continue;   // 仍要走完循环，名字缓存不能漏
-            out.add(new OnlinePlayer(id, name, relationTo(friends, selfId, id)));
+            out.add(new OnlinePlayer(id, ConversationSummary.clampName(PokiNames.display(id, name)), relationTo(friends, selfId, id)));
         }
         return out;
     }
@@ -367,14 +367,15 @@ public final class ChatService {
     /** 建立关系时把双方的名字都记一遍，日后任一方离线都显示得出来 */
     private static void rememberBoth(MinecraftServer server, FriendData friends,
                                      UUID a, UUID b) {
-        friends.rememberName(a, resolveName(server, friends, a, server.getPlayerList().getPlayer(a)));
-        friends.rememberName(b, resolveName(server, friends, b, server.getPlayerList().getPlayer(b)));
+        friends.rememberName(a, ConversationSummary.clampName(rawName(server, friends, a, server.getPlayerList().getPlayer(a))));
+        friends.rememberName(b, ConversationSummary.clampName(rawName(server, friends, b, server.getPlayerList().getPlayer(b))));
     }
 
     /** 依次试：在线真名 → 名字缓存 → 资料缓存 → UUID 前 8 位。截断只在这一处收口 */
     public static String resolveName(MinecraftServer server, FriendData friends,
                                      UUID id, ServerPlayer online) {
-        return ConversationSummary.clampName(rawName(server, friends, id, online));
+        // 포키: PokiName 한글닉 우선 (이름 캐시·검색에는 마크닉을 그대로 씀)
+        return ConversationSummary.clampName(PokiNames.display(id, rawName(server, friends, id, online)));
     }
 
     /** 原样结果不截断；超长名字进了网络包会在编码阶段抛异常打断连接，所以由 resolveName 统一截 */

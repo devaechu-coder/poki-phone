@@ -122,7 +122,14 @@ public final class SnsServer {
         };
     }
 
+    /** 포키: 보여 줄 때마다 PokiName 한글닉으로 (닉 바꾸면 지난 글에도 반영) */
+    private static String nick(UUID id, String fallback) {
+        return clean(com.november.mcphone.feature.chat.PokiNames.display(id, fallback), SnsWire.NAME_LENGTH);
+    }
+
     private static String nameOf(MinecraftServer server, SnsData data, UUID id) {
+        String n = com.november.mcphone.feature.chat.PokiNames.display(id, null);
+        if (n != null) return clean(n, SnsWire.NAME_LENGTH);
         var online = server.getPlayerList().getPlayer(id);
         if (online != null) return clean(online.getName().getString(), SnsWire.NAME_LENGTH);
         try {
@@ -175,10 +182,10 @@ public final class SnsServer {
         for (var c : p.comments) {
             if (blocked.contains(c.author)) continue;
             count++;
-            if (withComments) cs.add(new SnsWire.Comment(c.id, c.author, c.name, c.time, c.text, c.author.equals(me) || p.author.equals(me) || staff));
+            if (withComments) cs.add(new SnsWire.Comment(c.id, c.author, nick(c.author, c.name), c.time, c.text, c.author.equals(me) || p.author.equals(me) || staff));
         }
         if (cs.size() > SnsWire.MAX_COMMENTS_SENT) cs = cs.subList(cs.size() - SnsWire.MAX_COMMENTS_SENT, cs.size());
-        return new SnsWire.Post(p.id, p.author, p.name, p.time, p.text, p.image, p.width, p.height,
+        return new SnsWire.Post(p.id, p.author, nick(p.author, p.name), p.time, p.text, p.image, p.width, p.height,
                 p.likes.size(), p.likes.contains(me), count, p.author.equals(me) || staff, cs);
     }
 
@@ -308,7 +315,7 @@ public final class SnsServer {
 
     private static void notifyStaff(MinecraftServer server, SnsData.Post p) {
         String head = p.text.length() > 30 ? p.text.substring(0, 30) + "…" : p.text;
-        var msg = Component.literal("§d[포키 SNS] §f" + p.name + " 님 글이 신고 " + REPORT_LIMIT + "회로 검토함에 들어감: §7" + head
+        var msg = Component.literal("§d[포키 SNS] §f" + nick(p.author, p.name) + " 님 글이 신고 " + REPORT_LIMIT + "회로 검토함에 들어감: §7" + head
                 + " §8(" + p.id.toString().substring(0, 8) + ")");
         for (var op : server.getPlayerList().getPlayers()) if (op.hasPermissions(2)) op.sendSystemMessage(msg);
         MCphone.LOGGER.info("[포키 SNS] 신고 누적 검토함: {} {} {}", p.id, p.name, p.text);
