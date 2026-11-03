@@ -43,6 +43,8 @@ public record TextBody(String text, java.util.Optional<ChatQuote> quote) impleme
 
     @Override
     public Component preview() {
+        // 포키냥 이모티콘은 목록·알림에서 [이모티콘] 으로
+        if (PokiSticker.parse(text) > 0) return Component.translatable("mcphone.chat.poki_sticker");
         return Component.literal(text);
     }
 }

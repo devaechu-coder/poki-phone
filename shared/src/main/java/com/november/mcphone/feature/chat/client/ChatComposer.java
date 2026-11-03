@@ -155,10 +155,10 @@ final class ChatComposer {
         float iconY = y + (INPUT_H - ATTACH_BTN) / 2f;
         // 语音仅留出固定槽位，现阶段没有录音或切换输入方式的动作。
         ChatUi.sizedIcon(g, ChatUi.Icon.VOICE, x, iconY, ATTACH_BTN, FontPalette.dim());
-        stickerHovered = canSendImages && ChatLayout.hit(mouseX, mouseY,
+        stickerHovered = ChatLayout.hit(mouseX, mouseY,
                 x + layout.stickerX() - 1, y, ATTACH_BTN + 2, INPUT_H);
         ChatUi.sizedIcon(g, ChatUi.Icon.SMILE, x + layout.stickerX(), iconY, ATTACH_BTN,
-                stickerHovered ? colorSendHover() : (canSendImages ? colorSend() : colorSendOff()));
+                stickerHovered ? colorSendHover() : colorSend());
         attachBtnHovered = false;
         attachHovered = null;
         if (hasText) attachMenuOpen = false;

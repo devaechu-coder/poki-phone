@@ -131,6 +131,14 @@ public final class ChatImageCache {
      */
     public static ImageCodec.Texture get(UUID image) {
         if (image == null) return null;
+        // 포키냥 이모티콘: 서버에 묻지 않고 모드 안의 그림을 바로 넣음
+        if (PokiStickers.isSticker(image)) {
+            Entry e = ENTRIES.get(image);
+            if (e == null || e.png == null) {
+                byte[] png = PokiStickers.png(image);
+                if (png != null) seed(image, png);
+            }
+        }
         REQUESTS.visible(image);
 
         Entry entry = ENTRIES.get(image);   // 命中即刷新 LRU 位置
@@ -199,7 +207,7 @@ public final class ChatImageCache {
         long now = System.currentTimeMillis();
         var wanted = REQUESTS.batch(peer, now, RequestChatImagePacket.MAX_IDS, id -> {
             Entry entry = ENTRIES.get(id);
-            return entry == null || entry.status != Status.LOADING ? null : entry.requestedAt;
+            return entry == null || entry.status != Status.LOADING || PokiStickers.isSticker(id) ? null : entry.requestedAt;
         });
         if (wanted.isEmpty()) return;
 

@@ -151,8 +151,9 @@ public final class PhoneScreen extends PhoneScreenBase {
     private final ChatMediaPicker chatFeedPicker = new ChatMediaPicker(
             PhotoLibrary.folder(), "mcphone.sns.pick_photo", "mcphone.chat.pick_photo_empty", false);
 
-    private final ChatMediaPicker chatStickerPicker = new ChatMediaPicker(
-            StickerLibrary.folder(), "mcphone.chat.pick_sticker", "mcphone.chat.pick_sticker_empty", true);
+    /** 포키: 스티커 칸은 포키냥 이모티콘 (사진 업로드 아님) */
+    private final com.november.mcphone.feature.chat.client.PokiStickerPicker chatStickerPicker =
+            new com.november.mcphone.feature.chat.client.PokiStickerPicker();
 
     private final NotesList notesList = new NotesList();
     private final NoteEditor noteEditor = new NoteEditor();
@@ -1554,7 +1555,8 @@ public final class PhoneScreen extends PhoneScreenBase {
             }
             case CHAT_STICKER_PICKER -> {
                 chatStickerPicker.mouseClicked(mx, my, button);
-                sendPicked(chatStickerPicker.consumeSelection());
+                int sticker = chatStickerPicker.consumeSelection();
+                if (sticker > 0) { navigateTo(conversationMode()); chatConversation.sendSticker(sticker); }
                 yield true;
             }
             case NOTES -> {
@@ -1830,7 +1832,6 @@ public final class PhoneScreen extends PhoneScreenBase {
         if (mode == Mode.GALLERY && gallery.keyPressed(keyCode)) return true;
         if (mode == Mode.CHAT_PHOTO_PICKER && chatPhotoPicker.keyPressed(keyCode)) return true;
         if (mode == Mode.CHAT_FEED_PHOTO_PICKER && chatFeedPicker.keyPressed(keyCode)) return true;
-        if (mode == Mode.CHAT_STICKER_PICKER && chatStickerPicker.keyPressed(keyCode)) return true;
         if (mode == Mode.ADDON_PAGE) {
             boolean consumed = addonHost.keyPressed(keyCode, scanCode, modifiers, false);
             leaveFailedAddon();

@@ -231,6 +231,13 @@ public final class ChatConversation {
         messages.latest();
     }
 
+    /** 포키냥 이모티콘 보내기 (그냥 글자 메시지) */
+    public void sendSticker(int n) {
+        if (channel == null || profileSuspended) return;
+        channel.send(com.november.mcphone.feature.chat.PokiSticker.token(n));
+        messages.latest();
+    }
+
     /** 位置是独立的普通文字消息，不提交或清理输入框里尚未发送的引用草稿。 */
     public void sendLocation() {
         var player = Minecraft.getInstance().player;

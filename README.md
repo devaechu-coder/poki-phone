@@ -11,6 +11,7 @@
 - 앱스토어·브라우저·스크립트 앱(.vue) 제거 (services 목록, `PhoneScreenRegistry.register`)
 - 포키톡 사진은 포키폰 카메라로 찍은 것만 (`CameraPhotos`, 게임 폴더 `mcphone/camera_photos.txt`), 파일 끌어다 놓기 막음
 - "나" 탭에서 GitHub·후원 제거
+- 포키냥 이모티콘 17종 (`PokiSticker`, 그림은 `textures/poki_sticker`, 메시지는 `[[포키냥:N]]` 글자만 오감 · 입력칸 웃는 얼굴 버튼)
 - 이름은 PokiName 한글닉으로 표시 (`PokiNames`, 서버의 `plugins/PokiName/nicknames.yml` 을 읽기만 함, 친구 추가 검색은 마크닉)
 - 「SNS」 탭(원래 둘러보기) = 포키 SNS · 차단 해제는 「내 글 → 차단 목록」 (`feature/sns`, 화면 `ChatFeed`)
   - 글 300자 + 카메라 사진 1장 (사진은 채팅 사진 업로드를 예약 대상 `SnsWire.PEER` 로 재사용), 좋아요, 댓글 200자

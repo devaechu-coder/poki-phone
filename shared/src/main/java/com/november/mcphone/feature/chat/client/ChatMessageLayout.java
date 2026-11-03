@@ -91,6 +91,16 @@ final class ChatMessageLayout {
                 continue;
             }
 
+            // 포키냥 이모티콘은 말풍선 대신 그림으로
+            int sticker = m.body() instanceof TextBody st && st.quote().isEmpty()
+                    ? com.november.mcphone.feature.chat.PokiSticker.parse(st.text()) : -1;
+            if (sticker > 0) {
+                int side = Math.max(16, Math.min(56, bubbleMaxW));
+                out.add(new Block(BlockType.IMAGE, self, List.of(), PokiStickers.id(sticker), side, side,
+                        1, 0, placement(side, nameLineHeight, senderLineHeight, group), null, m, null));
+                continue;
+            }
+
             String text = m.body() instanceof TextBody t ? t.text() : m.body().preview().getString();
             ChatTextLayout selectable = ChatTextLayout.build(font, text, textMaxW);
             List<FormattedCharSequence> lines = selectable.visualLines();
