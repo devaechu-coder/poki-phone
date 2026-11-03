@@ -1,0 +1,395 @@
+package com.november.mcphone.feature.chat;
+
+import com.november.mcphone.core.PhonePlayerData;
+import com.november.mcphone.core.ServerConfig;
+import com.november.mcphone.feature.chat.net.ConversationSummary;
+import com.november.mcphone.feature.chat.net.OnlinePlayer;
+import com.november.mcphone.feature.chat.net.Relation;
+import com.november.mcphone.util.TextSanitizer;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+/**
+ * 聊天与好友的服务端业务逻辑，只回答"结果是什么"，不关心传输。
+ * 好友是双向的：申请 → 对方同意 → 互为好友；非好友之间不能聊天。
+ */
+public final class ChatService {
+
+    private ChatService() {}
+
+    /** 会话列表就是好友列表；解除好友后会话消失但记录仍在。顺带把在线好友的名字记进缓存 */
+    public static List<ConversationSummary> buildConversations(ServerPlayer self) {
+        MinecraftServer server = self.level().getServer();
+        UUID selfId = self.getUUID();
+
+        ChatData chat = ChatData.get(server);
+        FriendData friends = FriendData.get(server);
+        ChatReadState read = PhonePlayerData.of(self).chatRead();
+
+        List<ConversationSummary> out = new ArrayList<>();
+        for (UUID peer : friends.getFriends(selfId)) {
+            ServerPlayer online = server.getPlayerList().getPlayer(peer);
+            boolean isOnline = online != null;
+
+            String name = resolveName(server, friends, peer, online);
+            if (isOnline) friends.rememberName(peer, name);
+
+            ChatData.Tail tail = ChatData.tail(ChatDeletionData.get(server).visible(selfId, peer,
+                    chat.getMessages(selfId, peer)), peer, read.getLastRead(peer));
+
+            out.add(tail.last() == null
+                    ? ConversationSummary.empty(peer, name, isOnline)
+                    : new ConversationSummary(peer, name, isOnline,
+                            Optional.of(tail.last().body()), tail.last().time(), tail.unread()));
+        }
+
+        // 有消息的按最后一条时间倒序，没聊过的沉底
+        out.sort(Comparator.comparingLong(ConversationSummary::lastTime).reversed());
+        return out;
+    }
+
+    /**
+     * 时间戳由服务端盖章，不采信客户端（客户端的钟能把自己的消息永远顶在列表最前）。
+     * 返回落库后的消息，未通过校验返回 null。
+     */
+    public static ChatMessage sendMessage(ServerPlayer sender, UUID targetId, String rawText) {
+        return sendMessage(sender,targetId,rawText,Optional.empty());
+    }
+    public static ChatMessage sendMessage(ServerPlayer sender, UUID targetId, String rawText, Optional<UUID> reply) {
+        return sendMessage(sender,targetId,rawText,reply,reply.map(ignored -> UUID.randomUUID()));
+    }
+    public static ChatMessage sendMessage(ServerPlayer sender, UUID targetId, String rawText, Optional<UUID> reply, Optional<UUID> ticket) {
+        if (reply.isPresent() != ticket.isPresent()) return null;
+        if (!FriendGuard.mayActOn(sender, targetId)) return null;
+        String text = TextSanitizer.sanitize(rawText, TextBody.MAX_LENGTH);
+        if (text.isEmpty()) return null;
+        UUID id = ticket.map(value -> ChatReplyIdentity.messageId(sender.getUUID(),targetId,false,value)).orElseGet(UUID::randomUUID);
+        // 先确认已落库的同一次提交，再找原文；原文可能已经被 100 条上限挤走。
+        if (ticket.isPresent()) {
+            var existing = ChatData.get(sender.level().getServer()).getMessages(sender.getUUID(),targetId).stream()
+                    .filter(m -> m.id().equals(id)).findFirst();
+            if (existing.isPresent()) return ChatReplyIdentity.matches(existing.get(),sender.getUUID(),reply.orElseThrow(),text)
+                    && getMessages(sender,targetId).stream().anyMatch(m -> m.id().equals(id)) ? existing.get() : null;
+        }
+        Optional<ChatQuote> quote = Optional.empty();
+        if (reply.isPresent()) {
+            var original = getMessages(sender,targetId).stream().filter(m -> m.id().equals(reply.get())).findFirst().orElse(null);
+            if (original == null) {
+                com.november.mcphone.platform.PlayerAccess.message(sender,net.minecraft.network.chat.Component.translatable("mcphone.chat.reply.server_unavailable"),true);
+                return null;
+            }
+            var server = sender.level().getServer();
+            quote = Optional.of(ChatQuote.from(original,resolveName(server,FriendData.get(server),original.sender(),server.getPlayerList().getPlayer(original.sender()))));
+        }
+        ChatMessage message = new ChatMessage(id, sender.getUUID(), System.currentTimeMillis(), new TextBody(text,quote));
+        store(sender,targetId,message);
+
+        // 自己发的对自己是已读的，否则对方一回复就把中间这段全算成未读
+        markReadAt(sender, targetId, message.time());
+        return message;
+    }
+
+    /**
+     * 落一条已经过门禁、已经清洗的文本，不动已读进度。
+     * 附属代发时发件人并没在看这个会话，在这里标已读会把对方发来的未读悄悄清零，所以标已读只留在界面那条路上。
+     */
+    public static ChatMessage storeText(ServerPlayer sender, UUID targetId, String text) {
+        ChatMessage message = ChatMessage.text(sender.getUUID(), text, System.currentTimeMillis());
+        store(sender, targetId, message);
+        return message;
+    }
+
+    /**
+     * 发图片前的门禁，在【动硬盘之前】问。
+     *
+     * 与 {@link #sendImage} 分开是因为中间隔着一次写文件，而那一次要挪到后台线程去做
+     * （见 ChatNetworking）：先在主线程把该拒的拒掉，别为一个连好友都不是的人写盘。
+     */
+    public static ImageOutcome maySendImage(ServerPlayer sender, UUID targetId) {
+        if (!ServerConfig.allowChatImages()) return ImageOutcome.DISABLED;
+        if (!FriendGuard.mayActOn(sender, targetId)) return ImageOutcome.NOTHING;
+        return ImageOutcome.OK;
+    }
+
+    /**
+     * 图片已经写进图片仓了，这里把对应的那条消息落库。返回落库后的消息，没通过校验返回 null。
+     *
+     * 校验要在这里【再做一遍】：写盘那一下是异步的，其间玩家可能已经把手机丢了、
+     * 或者被对方解除了好友。返回 null 时调用方负责把刚写下的那张图删掉。
+     */
+    public static ChatMessage sendImage(ServerPlayer sender, UUID targetId,
+                                        UUID imageId, int width, int height,
+                                        int frames, int frameMs) {
+        if (maySendImage(sender, targetId) != ImageOutcome.OK) return null;
+
+        UUID senderId = sender.getUUID();
+        ChatMessage message = new ChatMessage(senderId, System.currentTimeMillis(),
+                new ImageBody(imageId, width, height, frames, frameMs));
+        store(sender, targetId, message);
+        trimImages(sender.level().getServer(), senderId, targetId);
+
+        markReadAt(sender, targetId, message.time());
+        return message;
+    }
+
+    /**
+     * 这个人能不能要这张图。
+     *
+     * 判据与拉历史消息（{@link #getMessages}）完全一致：得是好友，且这张图确实出现在
+     * 他与对方的那段记录里。不这么判的话，知道一个图片 id 就能把别人的图要走——
+     * id 是随机 UUID，猜不出来，但它会随消息一起下发给会话的另一方，而"另一方"
+     * 可能日后解除了好友。
+     *
+     * 现扫这一段记录（至多 100 条）而不是另建索引，理由与 {@link ChatData#referencedImages}
+     * 那条一样：多一份要保持同步的东西，就多一处会悄悄对不上的地方。
+     */
+    public static boolean mayReadImage(ServerPlayer self, UUID peer, UUID imageId) {
+        if (!FriendData.get(self.level().getServer()).areFriends(self.getUUID(), peer)) return false;
+
+        for (ChatMessage m : getMessages(self, peer)) {
+            if (m.body() instanceof ImageBody image && image.image().equals(imageId)) return true;
+        }
+        return false;
+    }
+
+    /** 落库；被 100 条上限挤出去的若是图片消息，它那张图跟着删——没有消息认领的像素只是垃圾 */
+    private static void store(ServerPlayer sender, UUID targetId, ChatMessage message) {
+        List<ChatMessage> evicted =
+                ChatData.get(sender.level().getServer()).addMessage(sender.getUUID(), targetId, message);
+
+        if (!evicted.isEmpty()) {
+            var existing = ChatData.get(sender.level().getServer()).getMessages(sender.getUUID(), targetId).stream()
+                    .map(ChatMessage::id).collect(java.util.stream.Collectors.toSet());
+            ChatDeletionData.get(sender.level().getServer()).retain(sender.getUUID(), targetId, existing);
+        }
+        for (ChatMessage old : evicted) {
+            if (old.body() instanceof ImageBody image) {
+                deleteImageIfUnreferenced(sender.level().getServer(), sender.getUUID(), targetId, image.image());
+            }
+        }
+    }
+
+    /**
+     * 没有别的消息还认领着这张图，才真的删。
+     *
+     * 图片按内容存（见 {@link ChatImageStore#write}），同一张表情反复发落在同一个文件上，
+     * 于是一条消息被挤出去【不等于】那张图没人要了——直接删的话，前面那几条会一起变成
+     * 「图片已过期」。
+     */
+    public static void deleteImageIfUnreferenced(MinecraftServer server, UUID a, UUID b,
+                                                 UUID imageId) {
+        for (ChatMessage m : ChatData.get(server).getMessages(a, b)) {
+            if (m.body() instanceof ImageBody image && image.image().equals(imageId)) return;
+        }
+        ChatImageStore.delete(server, imageId);
+    }
+
+    /**
+     * 一对会话里的图超过上限时，把最旧的那几张的像素删掉。
+     *
+     * 只删像素、不删消息：那条消息还在记录里，界面显示成「图片已过期」。删掉整条的话，
+     * 聊天记录会凭空少几行，而少的是什么谁也不知道——玩家只会觉得"我记得这儿说过话"。
+     */
+    private static void trimImages(MinecraftServer server, UUID a, UUID b) {
+        List<ChatMessage> messages = ChatData.get(server).getMessages(a, b);
+
+        // 数的是【不同的图】而不是图片消息：同一张表情发二十次只该占一个名额，它也只占一个文件。
+        // 插入序的 map + 先 remove 再 put，于是键的顺序就是"最后一次用到"的先后
+        LinkedHashMap<UUID, Boolean> lastUse = new LinkedHashMap<>();
+        for (ChatMessage m : messages) {
+            if (m.body() instanceof ImageBody image) {
+                lastUse.remove(image.image());
+                lastUse.put(image.image(), Boolean.TRUE);
+            }
+        }
+
+        int excess = lastUse.size() - ChatImage.MAX_IMAGES_PER_CONVERSATION;
+        if (excess <= 0) return;
+
+        // 从头删就是先删"最久没再发过的那张"。已经过期的再删一次是无害的空操作
+        for (UUID imageId : lastUse.keySet()) {
+            if (excess <= 0) break;
+            ChatImageStore.delete(server, imageId);
+            excess--;
+        }
+    }
+
+    /** 非好友一律返回空，免得解除好友后还能翻旧账 */
+    public static List<ChatMessage> getMessages(ServerPlayer self, UUID peer) {
+        if (!FriendData.get(self.level().getServer()).areFriends(self.getUUID(), peer)) return List.of();
+        return ChatDeletionData.get(self.level().getServer()).visible(self.getUUID(), peer,
+                ChatData.get(self.level().getServer()).getMessages(self.getUUID(), peer));
+    }
+
+    /** 已读时刻由服务端盖章：采信客户端的话报一个未来时间就能让红点永远不出现 */
+    public static void markRead(ServerPlayer self, UUID peer) {
+        if (!FriendData.get(self.level().getServer()).areFriends(self.getUUID(), peer)) return;
+        markReadAt(self, peer, System.currentTimeMillis());
+    }
+
+    private static void markReadAt(ServerPlayer self, UUID peer, long time) {
+        PhonePlayerData data = PhonePlayerData.of(self);
+        ChatReadState read = data.chatRead();
+        ChatReadState updated = read.withLastRead(peer, time);
+        if (updated != read) {
+            data.setChatRead(updated);
+        }
+    }
+
+    /** 对方已经申请过我时直接成为好友，不再挂一条反向申请 */
+    public static FriendOutcome sendFriendRequest(ServerPlayer self, UUID targetId) {
+        if (!FriendGuard.carriesPhone(self)) return FriendOutcome.NOTHING;
+
+        UUID selfId = self.getUUID();
+        if (selfId.equals(targetId)) return FriendOutcome.NOTHING;
+
+        MinecraftServer server = self.level().getServer();
+        FriendData friends = FriendData.get(server);
+
+        if (friends.areFriends(selfId, targetId)) return FriendOutcome.NOTHING;
+        if (friends.countFriends(selfId) >= FriendData.MAX_FRIENDS) return FriendOutcome.SELF_FULL;
+        if (friends.countFriends(targetId) >= FriendData.MAX_FRIENDS) return FriendOutcome.PEER_FULL;
+
+        if (friends.hasRequest(targetId, selfId)) {
+            friends.removeRequest(targetId, selfId);
+            friends.addFriendship(selfId, targetId);
+            rememberBoth(server, friends, selfId, targetId);
+            return FriendOutcome.OK;
+        }
+
+        // 只能申请服务端见过的人，否则可以对着编造的 UUID 无限发申请把存档撑大
+        if (!isKnownPlayer(server, friends, targetId)) return FriendOutcome.UNKNOWN_PLAYER;
+
+        if (!friends.addRequest(selfId, targetId, System.currentTimeMillis())) {
+            return FriendOutcome.PEER_INBOX_FULL;
+        }
+        rememberBoth(server, friends, selfId, targetId);
+        return FriendOutcome.OK;
+    }
+
+    /**
+     * 同意与拒绝共用校验：申请必须存在且是发给我的。
+     * 上限检查必须在删申请之前，否则满员时申请被吃掉、好友也没加上、两边都没提示。
+     */
+    public static FriendOutcome respondFriendRequest(ServerPlayer self, UUID requesterId,
+                                                     boolean accept) {
+        if (!FriendGuard.carriesPhone(self)) return FriendOutcome.NOTHING;
+
+        UUID selfId = self.getUUID();
+        FriendData friends = FriendData.get(self.level().getServer());
+
+        // 拦住伪造客户端凭空"同意"一条不存在的申请
+        if (!friends.hasRequest(requesterId, selfId)) return FriendOutcome.NOTHING;
+
+        if (!accept) {
+            friends.removeRequest(requesterId, selfId);
+            return FriendOutcome.OK;
+        }
+
+        if (friends.countFriends(selfId) >= FriendData.MAX_FRIENDS) {
+            return FriendOutcome.SELF_FULL;
+        }
+        if (friends.countFriends(requesterId) >= FriendData.MAX_FRIENDS) {
+            return FriendOutcome.PEER_FULL;
+        }
+
+        friends.removeRequest(requesterId, selfId);
+        friends.addFriendship(selfId, requesterId);
+        rememberBoth(self.level().getServer(), friends, selfId, requesterId);
+        return FriendOutcome.OK;
+    }
+
+    /** 双向解除并清掉本人的已读进度；聊天记录不删，那是双方共有的 */
+    public static boolean removeFriend(ServerPlayer self, UUID targetId) {
+        if (!FriendGuard.carriesPhone(self)) return false;
+
+        FriendData friends = FriendData.get(self.level().getServer());
+        if (!friends.removeFriendship(self.getUUID(), targetId)) return false;
+
+        PhonePlayerData data = PhonePlayerData.of(self);
+        ChatReadState read = data.chatRead();
+        ChatReadState updated = read.without(targetId);
+        if (updated != read) {
+            data.setChatRead(updated);
+        }
+        return true;
+    }
+
+    /**
+     * 在线玩家列表，排除本人，超过 limit 截断（总数由调用方另取）。
+     * 顺带把每个在线玩家的名字记进缓存：这是唯一能可靠拿到"UUID 对应谁"的时机。
+     */
+    public static List<OnlinePlayer> listOnlinePlayers(ServerPlayer self, int limit) {
+        UUID selfId = self.getUUID();
+        FriendData friends = FriendData.get(self.level().getServer());
+
+        List<OnlinePlayer> out = new ArrayList<>();
+        for (ServerPlayer p : self.level().getServer().getPlayerList().getPlayers()) {
+            UUID id = p.getUUID();
+            if (id.equals(selfId)) continue;
+
+            String name = ConversationSummary.clampName(com.november.mcphone.platform.PlayerAccess.name(p));
+            friends.rememberName(id, name);
+
+            if (out.size() >= limit) continue;   // 仍要走完循环，名字缓存不能漏
+            out.add(new OnlinePlayer(id, name, relationTo(friends, selfId, id)));
+        }
+        return out;
+    }
+
+    /** 在线人数（不含本人），用于告知界面列表被截断了多少 */
+    public static int countOnlineExcludingSelf(ServerPlayer self) {
+        return Math.max(0, self.level().getServer().getPlayerList().getPlayerCount() - 1);
+    }
+
+    public static Relation relationTo(FriendData friends, UUID selfId, UUID otherId) {
+        if (friends.areFriends(selfId, otherId)) return Relation.FRIEND;
+        if (friends.hasRequest(selfId, otherId)) return Relation.REQUEST_SENT;
+        if (friends.hasRequest(otherId, selfId)) return Relation.REQUEST_RECEIVED;
+        return Relation.NONE;
+    }
+
+    /** 在线，或名字缓存/资料缓存里有记录 */
+    public static boolean isKnownPlayer(MinecraftServer server, FriendData friends, UUID id) {
+        if (server.getPlayerList().getPlayer(id) != null) return true;
+        if (friends.getName(id) != null) return true;
+
+        return com.november.mcphone.platform.PlayerAccess.cachedName(server,id).isPresent();
+    }
+
+    /** 建立关系时把双方的名字都记一遍，日后任一方离线都显示得出来 */
+    private static void rememberBoth(MinecraftServer server, FriendData friends,
+                                     UUID a, UUID b) {
+        friends.rememberName(a, resolveName(server, friends, a, server.getPlayerList().getPlayer(a)));
+        friends.rememberName(b, resolveName(server, friends, b, server.getPlayerList().getPlayer(b)));
+    }
+
+    /** 依次试：在线真名 → 名字缓存 → 资料缓存 → UUID 前 8 位。截断只在这一处收口 */
+    public static String resolveName(MinecraftServer server, FriendData friends,
+                                     UUID id, ServerPlayer online) {
+        return ConversationSummary.clampName(rawName(server, friends, id, online));
+    }
+
+    /** 原样结果不截断；超长名字进了网络包会在编码阶段抛异常打断连接，所以由 resolveName 统一截 */
+    private static String rawName(MinecraftServer server, FriendData friends,
+                                  UUID id, ServerPlayer online) {
+        if (online != null) {
+            return com.november.mcphone.platform.PlayerAccess.name(online);
+        }
+
+        String cached = friends.getName(id);
+        if (cached != null) return cached;
+
+        var profile = com.november.mcphone.platform.PlayerAccess.cachedName(server,id);
+        if (profile.isPresent()) return profile.get();
+
+        return id.toString().substring(0, 8);
+    }
+}

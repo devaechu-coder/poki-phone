@@ -1,0 +1,44 @@
+// 「打包并签名」的离线那一条路（施工方案 §12.6）：
+//
+//     ./gradlew signApp -PappDir=/path/to/app [-Pauthor=名字] [-PoutZip=/path/out.zip]
+//
+// 【为什么在 gradle/ 而不是某个 platforms/ 下】
+//
+// 它是仓库级的约定，三个目标共用一份。写进某个平台的 build.gradle 会有两个后果：
+// 另外两个目标签不了包；以及那份 build.gradle 开始装仓库级的东西 —— 而
+// guard-version 那道闸盯的正是这种漂移（它查 platforms/*/gradle.properties 里
+// 有没有出现仓库级的键）。
+//
+// 【为什么不挂到 check / build 上】
+//
+// 签名要私钥。挂上去等于每次构建都要有一把私钥在场，而 CI 上没有、也不该有。
+// 签名是命令式操作（§12.6）：作者自己点头才签，不因为"文件变了"就签。
+//
+// 【入口为什么在 shared/ 而不是 docs/】
+//
+// 第一版放在 docs/ 下，想着"开发期工具不必进 jar"。结果 CI 全红：assertTests 会自动
+// 发现 docs/ 下每一个带 main() 的类并跑一遍，于是它被当成断言测试无参跑了、退出码 2。
+//
+// 挪进 shared/ 之后还顺带解决一件事：游戏里那个「打包并签名」按钮要做的事与它逐字相同，
+// readDir / zip 两个方法直接用得上。
+
+tasks.register('signApp', JavaExec) {
+    group = 'mcphone'
+    description = '给一个 App 目录签名，出一个带 META/sig.json 的 zip'
+
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.november.mcphone.core.script.pkg.AppSigner'
+
+    doFirst {
+        if (!project.hasProperty('appDir')) {
+            throw new GradleException('要 -PappDir=... 指一个 App 目录')
+        }
+        // gameDir 默认取 run/，那是开发环境里游戏目录的位置；作者的密钥就在它下面的
+        // config/mcphone/keys/。给 -PgameDir 可以指别处（比如真实的 .minecraft）
+        def game = project.findProperty('gameDir') ?: "${projectDir}/run"
+        def argv = [project.property('appDir').toString(), game.toString()]
+        if (project.hasProperty('author')) argv << project.property('author').toString()
+        if (project.hasProperty('outZip')) argv << project.property('outZip').toString()
+        args = argv
+    }
+}

@@ -1,0 +1,541 @@
+package com.november.mcphone.core.client;
+
+import com.google.gson.JsonObject;
+import com.november.mcphone.MCphone;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.packs.resources.Resource;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.InputStream;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * 手机界面换肤 —— 贴图优先，纯色兜底（{@link PhoneTheme}）。
+ * 贴图放 assets/mcphone/textures/（资源包同路径可覆盖），尺寸不必精确匹配，会被拉伸到目标区域。
+ * 探测结果有缓存，资源重载时由 {@link #clearCache()} 清空。
+ */
+public final class PhoneSkin {
+
+    private PhoneSkin() {}
+
+    /**
+     * 可换肤的界面元素。构造器第一个参数是 textures/ 下的路径（不含前缀与 .png），
+     * 第二个是 1.2.7 之前 textures/gui/ 下的老路径，新的找不到时回退。
+     * 注释里的尺寸是【画在屏幕上有多大】，不是文件必须多大：贴图会被拉伸到目标区域，
+     * 整数倍放大的图一样能用，线条细、有弧度的图案这么做更清楚（自带的 frame 是 2 倍，导航栏三个键是 10 倍）。
+     */
+    public enum Element {
+        /** 通用「打开文件夹」图标。建议 32×32，绘制时缩小到标题栏按钮内。 */
+        OPEN_FOLDER("common/open_folder"),
+
+        /**
+         * 手机外壳边框。建议 136×216（含边框整机）；中间 120×200 必须透明——外壳最后画、盖在所有内容之上，
+         * 中间画的东西（内圆角、刘海）会显示。可见的一圈是外侧 8px，圆角半径建议不超过 11px。
+         */
+        FRAME("phone/frame", "phone_frame"),
+
+        /**
+         * 平板的外壳边框。建议 256×184（含边框整机，也可以是它的整数倍），
+         * 中间 240×168 必须透明，规矩与 {@link #FRAME} 完全一样。
+         *
+         * <b>缺这一张时不会出错</b>：手机那张 {@link #FRAME} 会按九宫格拉到平板的形状上顶着用，
+         * 只是侧键会留在左右两边——而平板的机身是横过来的，键在上下。所以只做手机外壳的资源包
+         * 照常能用，想做全就补这一张。
+         *
+         * 自带的这张是由手机那张拼出来的（四角原样搬、直边平铺同一段剖面、按键跟着机身转 90°），
+         * 生成脚本见 {@code docs/make_tablet_frame.py}。
+         */
+        FRAME_TABLET("phone/frame_tablet", "phone_frame_tablet"),
+
+        /** 顶部状态栏背景。建议 120×10 */
+        STATUS_BAR("phone/status_bar", "status_bar"),
+
+        /** 状态栏右侧的满电图标。建议 24×24 透明贴图，半尺寸绘制；电池固定满电。 */
+        BATTERY_FULL("phone/battery_full"),
+
+        /** 电池左侧的满格信号图标。建议 24×24 透明贴图，绘制为 10×10；信号固定满格。 */
+        SIGNAL_FULL("phone/signal_full"),
+
+        /**
+         * 导航栏背景。建议 120×14。
+         *
+         * 平板上这一条<b>立在右边</b>，同一张图会被拉成 14×158，所以画纯色或沿短边的
+         * 渐变最稳；带方向的花纹在那儿会被抻长。
+         */
+        NAV_BAR("phone/nav_bar", "nav_bar"),
+
+        /**
+         * 导航栏"返回"键图标。建议 40×14；没有贴图时画 ◁ 字符。
+         *
+         * 图标一律按这个设计尺寸在格子里<b>居中</b>画，不跟着格子拉伸。平板上那条立着，
+         * 只有 14 宽，超出条宽的部分会被裁掉 —— 图案画在正中那 14×14 里就不会被裁到
+         * （自带的三个图案约 8×8，正好）。三个键同此。
+         */
+        NAV_BACK("phone/nav_back", "nav_back"),
+
+        /** 导航栏"主页"键图标。建议 40×14；没有贴图时画 ○ 字符。摆法见 {@link #NAV_BACK} */
+        NAV_HOME("phone/nav_home", "nav_home"),
+
+        /** 导航栏"多任务"键图标。建议 40×14；没有贴图时画 □ 字符。摆法见 {@link #NAV_BACK} */
+        NAV_TASKS("phone/nav_tasks", "nav_tasks"),
+
+        /** 主屏拖动时"松手落这儿"的空槽。建议 20×20；兜底色 {@link PhoneTheme#COLOR_APP_DROP_SLOT} */
+        HOME_DROP_SLOT("phone/drop_slot", "home_drop_slot"),
+
+        /** 主屏底部页码点（非当前页）。建议 3×3；兜底色 {@link PhoneTheme#COLOR_PAGE_DOT} */
+        HOME_PAGE_DOT("phone/page_dot", "home_page_dot"),
+
+        /** 页码点（当前页）。建议 3×3；兜底色 {@link PhoneTheme#COLOR_PAGE_DOT_ACTIVE} */
+        HOME_PAGE_DOT_ACTIVE("phone/page_dot_active", "home_page_dot_active"),
+
+        /** 拖图标停在屏幕边上时的翻页提示条。建议 10×176（竖条），整张按透明度淡入，画实心即可；兜底色 {@link PhoneTheme#COLOR_PAGE_EDGE} */
+        HOME_PAGE_EDGE("phone/page_edge", "home_page_edge"),
+
+        /** 自己发出的聊天气泡底。默认整张拉伸；mcphone_skin.border 元数据可启用固定边角 */
+        CHAT_BUBBLE_SELF("chat/bubble_self", "chat_bubble_self"),
+
+        /** 对方发来的聊天气泡底。拉伸方式同 {@link #CHAT_BUBBLE_SELF} */
+        CHAT_BUBBLE_PEER("chat/bubble_peer", "chat_bubble_peer"),
+
+        /** 会话界面底部输入框的底。按设备宽度自适应，高 12；mcphone_skin.border 可保留边角 */
+        CHAT_INPUT_BAR("chat/input_bar", "chat_input_bar"),
+
+        /** 会话列表在线好友行的"传送"小图标。建议 7×7，按实际绘制尺寸画（不做平滑缩放）；缺图时画 → 字符 */
+        CHAT_TELEPORT("chat/teleport", "chat_teleport"),
+
+        /** 会话界面输入栏右边的「+」（空白输入时点开图片 / 表情）。建议 9×9；缺图时画圆圈加号 */
+        CHAT_ATTACH("chat/attach", "chat_attach"),
+
+        /** 聊天界面的 24×24 透明图标，资源包可按同一路径覆盖；白色源图允许界面着色。 */
+        CHAT_TAB_MESSAGE("chat/ui/message"),
+        CHAT_TAB_CONTACTS("chat/ui/contact"),
+        CHAT_TAB_DISCOVER("chat/ui/compass"),
+        CHAT_TAB_PROFILE("chat/ui/user"),
+        CHAT_SEARCH("chat/ui/search"),
+        /** 用户提供的 96×96 抗锯齿透明图标，按现有逻辑尺寸绘制并着色。 */
+        CHAT_BACK("chat/ui/back"),
+        CHAT_MORE("chat/ui/more"),
+        CHAT_SMILE("chat/ui/smile"),
+        CHAT_VOICE("chat/ui/voice"),
+        /** 右键菜单的透明图标，按统一 8×8 逻辑尺寸居中并随菜单文字着色。 */
+        CHAT_COPY("chat/ui/copy"),
+        /** 圆环内的左引号，透明白色素材随菜单文字着色。 */
+        CHAT_REPLY("chat/ui/reply"),
+        CHAT_DELETE("chat/ui/delete"),
+        CHAT_PASTE("chat/ui/paste"),
+        /** 首页加号菜单的手绘 96×96 透明图标，与菜单标签使用同一颜色。 */
+        CHAT_CREATE_GROUP("chat/ui/create_group"),
+        CHAT_ADD_CONTACT("chat/ui/add_contact"),
+        /** 「我」菜单的用户提供图标，白色源图随主题文字着色。 */
+        CHAT_FAVORITE("chat/ui/favorite"),
+        CHAT_GITHUB("chat/ui/github"),
+        CHAT_SPONSOR("chat/ui/sponsor"),
+        CHAT_SETTINGS("chat/ui/settings"),
+
+        /** 收到消息的通知底。建议 160×32（原版通知槽位尺寸） */
+        TOAST_BG("phone/toast", "toast_bg"),
+
+        /** 未读条数角标底。建议 12×9；主屏图标角标、会话列表与通知共用 */
+        UNREAD_BADGE("phone/unread_badge", "unread_badge"),
+
+        /** 应用详情页可点按钮底（购买/下载）。建议 100×16，整张拉伸；兜底色 {@link PhoneTheme#COLOR_BUTTON} */
+        STORE_BUTTON("store/button", "store_button"),
+
+        /** 不可点的按钮底（已安装、买不起）。建议 100×16；兜底色 {@link PhoneTheme#COLOR_BUTTON_DISABLED} */
+        STORE_BUTTON_DISABLED("store/button_disabled", "store_button_disabled"),
+
+        /** 商店「联动 App」入口格图标。建议 20×20；缺图时画纯色底加三个小方块，兜底色 {@link PhoneTheme#COLOR_STATUS_BAR} */
+        STORE_COMPANION("store/companion", "store_companion"),
+
+        /** 音乐播放器「上一首」。建议 9×9，与行内文字等高；缺图时画 ⏮ 字符 */
+        MUSIC_PREV("music/prev", "music_prev"),
+
+        /** 「播放」键。建议 9×9；缺图时画 ▶ 字符 */
+        MUSIC_PLAY("music/play", "music_play"),
+
+        /** 「暂停」键。建议 9×9。缺图时画 ⏸ 字符。与 {@link #MUSIC_PLAY} 成对 */
+        MUSIC_PAUSE("music/pause", "music_pause"),
+
+        /** 「下一首」。建议 9×9。缺图时画 ⏭ 字符 */
+        MUSIC_NEXT("music/next", "music_next"),
+
+        /** 唱片仓「取出」。建议 9×9；缺图时画 ⏏ 字符 */
+        MUSIC_EJECT("music/eject", "music_eject"),
+
+        /** 唱片仓「从背包放」。建议 9×9；缺图时画 ▤ 字符。只在仓空时画，与「取出」不同时出现 */
+        MUSIC_BACKPACK("music/backpack", "music_backpack"),
+
+        /** 循环模式键 —— 列表循环。建议 9×9；缺图时画 ↻ 字符 */
+        MUSIC_MODE_LIST_LOOP("music/mode_list_loop", "music_mode_list_loop"),
+
+        /** 循环模式键 —— 单曲循环。建议 9×9，缺图时画 ① 字符 */
+        MUSIC_MODE_SINGLE_LOOP("music/mode_single_loop", "music_mode_single_loop"),
+
+        /** 循环模式键 —— 随机播放。建议 9×9，缺图时画 ⇄ 字符 */
+        MUSIC_MODE_SHUFFLE("music/mode_shuffle", "music_mode_shuffle"),
+
+        /**
+         * 相册单张查看的「删除」键。建议 9×9；缺图时画「删除」两个字。
+         * 只管"还没上膛"的那一态；点过一次后的「再点一次确认」一律是文字，不走贴图。
+         */
+        GALLERY_DELETE("gallery/delete", "gallery_delete"),
+
+        /** 浏览器面板底。建议 320×200，整张拉伸；兜底色 {@link PhoneTheme#COLOR_SCREEN_BG} */
+        BROWSER_PANEL("browser/panel", "browser_panel"),
+
+        /** 浏览器工具条底（后退/前进/刷新 + 地址栏）。建议 320×22；在面板外面，浮在上方留白里 */
+        BROWSER_BAR("browser/bar", "browser_bar"),
+
+        /** 工具条上的「后退」。建议 22×18（整个键框，不是居中的小图标）；缺图时画 ◀ 字符 */
+        BROWSER_BACK("browser/back"),
+
+        /** 「前进」。建议 22×18；缺图时画 ▶ 字符 */
+        BROWSER_FORWARD("browser/forward"),
+
+        /** 「刷新」。建议 22×18；缺图时画 ↻ 字符。三个键点不动时整张按透明度压暗 */
+        BROWSER_RELOAD("browser/reload"),
+
+        /**
+         * 书架列表里那本兜底的书。建议 16×16，按实际绘制尺寸画（不做平滑缩放）；
+         * 兜底色 {@link PhoneTheme#COLOR_BOOK_SPINE}。
+         * 只在书源画不出那本书自己的图标时才用得上——多数书画出来是它的物品。
+         */
+        READER_BOOK("reader/book", "reader_book"),
+
+        /** 书架顶上那条搜索栏的底。建议 112×12，整张拉伸；兜底色 {@link PhoneTheme#COLOR_SEARCH_BAR} */
+        READER_SEARCH_BAR("reader/search_bar", "reader_search_bar"),
+
+        /** 书已收进书架时行右端那颗星。建议 9×9，按实际绘制尺寸画；缺图时画 ★ 字符 */
+        READER_SHELVED("reader/shelved", "reader_shelved"),
+
+        /** 书还没收进书架时那颗星。建议 9×9；缺图时画 ☆ 字符。与 {@link #READER_SHELVED} 成对，要换就两张一起换 */
+        READER_UNSHELVED("reader/unshelved", "reader_unshelved"),
+
+        /** 底部「书架 / 书城」当前那一页的底。建议 54×12，整张拉伸；兜底色 {@link PhoneTheme#COLOR_READER_TAB}。另一页不画底 */
+        READER_TAB("reader/tab", "reader_tab"),
+
+        /**
+         * 滑条的槽（「设置 → 界面大小」那一条）。建议 100×6，整张横向拉伸；
+         * 兜底色 {@link PhoneTheme#COLOR_SLIDER_TRACK}。
+         * 这一组四件是【通用滑条】，不是界面大小专用——将来音量条之类的也走它们。
+         */
+        SLIDER_TRACK("settings/slider_track"),
+
+        /** 滑条已填充的那一段。建议 100×6，按当前值裁宽后拉伸；兜底色 {@link PhoneTheme#COLOR_SLIDER_FILL} */
+        SLIDER_FILL("settings/slider_fill"),
+
+        /** 滑块。建议 4×14（比槽高，压在槽上）；兜底色 {@link PhoneTheme#COLOR_SLIDER_KNOB} */
+        SLIDER_KNOB("settings/slider_knob"),
+
+        /** 加减键的底。建议 14×14；兜底色 {@link PhoneTheme#COLOR_STEP_BUTTON}，悬停时整张提亮 */
+        STEP_BUTTON("settings/step_button");
+
+        /** 现在的路径，按功能分目录 */
+        private final ResourceLocation texture;
+
+        /** 1.2.7 之前 textures/gui/ 下的老路径，为兼容已发布的资源包保留；新路径找不到才回退 */
+        private final ResourceLocation legacyTexture;
+
+        /**
+         * 1.2.7 之后才有的元素。那次改路径之前不存在，也就没有老路径要兼容——
+         * 给它编一个 textures/gui/ 下的名字只会让人以为那儿曾经有过东西。
+         */
+        Element(String path) {
+            this.texture = ResourceLocation.fromNamespaceAndPath(
+                    MCphone.MODID, "textures/" + path + ".png");
+            this.legacyTexture = null;
+        }
+
+        Element(String path, String legacyFileName) {
+            this.texture = ResourceLocation.fromNamespaceAndPath(
+                    MCphone.MODID, "textures/" + path + ".png");
+            this.legacyTexture = ResourceLocation.fromNamespaceAndPath(
+                    MCphone.MODID, "textures/gui/" + legacyFileName + ".png");
+        }
+
+        public ResourceLocation texture() {
+            return texture;
+        }
+
+        public ResourceLocation legacyTexture() {
+            return legacyTexture;
+        }
+    }
+
+    /** 一张已确认存在的贴图及其真实尺寸 */
+    private record SkinTexture(ResourceLocation location, int width, int height, int border, int scale, Integer textColor) {}
+
+    record SkinMetadata(int border, int scale, Integer textColor) {
+        SkinMetadata(int border, int scale) { this(border, scale, null); }
+    }
+
+    /** scale 是源像素相对逻辑像素的倍率。旧包未写时仍为 1，不改变原有边角尺寸。 */
+    static SkinMetadata parseSkinMetadata(JsonObject json) {
+        int border = json.has("border") ? json.get("border").getAsInt() : 0;
+        int scale = json.has("scale") ? json.get("scale").getAsInt() : 1;
+        if (scale < 1 || scale > 16 || (json.has("scale") && json.get("scale").getAsDouble() != scale)) {
+            throw new IllegalArgumentException("scale 必须是 1～16 的整数");
+        }
+        Integer color = null;
+        if (json.has("text_color")) {
+            String hex = json.get("text_color").getAsString().replace("#", "");
+            if (hex.length() != 6 && hex.length() != 8) throw new IllegalArgumentException("text_color 需要六位 RGB 或八位 ARGB");
+            color = (int) Long.parseLong(hex, 16);
+            if (hex.length() == 6) color |= 0xFF000000;
+        }
+        return new SkinMetadata(border, scale, color);
+    }
+
+    static SkinMetadata effectiveSkinMetadata(SkinMetadata metadata, boolean samePack) {
+        // 旧资源包可能只覆盖 PNG，继承到本体的八倍 mcmeta；不能把它的普通图当八倍图缩小边角。
+        // 新 scale 属性随同一资源包的 PNG 与 mcmeta 一起声明；旧 border 单独覆盖仍照常生效。
+        if (samePack) return metadata;
+        return metadata.scale() > 1 ? new SkinMetadata(metadata.border() / metadata.scale(), 1)
+                : new SkinMetadata(metadata.border(), metadata.scale());
+    }
+
+
+    /** 探测结果缓存；empty（没有这张贴图）也要缓存，否则缺贴图的元素每帧都要查一次资源管理器 */
+    private static final Map<Element, Optional<SkinTexture>> CACHE = new HashMap<>();
+
+    /** resolveWithLegacy 的结果缓存。键是"想要的路径"，值是"实际用的路径" */
+    private static final Map<ResourceLocation, ResourceLocation> PATH_CACHE = new HashMap<>();
+
+    /** 资源重载时调用，挂在客户端重载事件上 */
+    public static void clearCache() {
+        CACHE.clear();
+        PATH_CACHE.clear();
+    }
+
+    /** 画贴图，拉伸到目标区域。真的画了才 true；没有贴图返回 false，调用方自行兜底 */
+    public static boolean draw(GuiGraphics g, Element element, int x, int y, int w, int h) {
+        if (w <= 0 || h <= 0) return false;
+
+        SkinTexture tex = resolve(element).orElse(null);
+        if (tex == null) return false;
+
+        drawTexture(g, tex, x, y, w, h);
+        return true;
+    }
+
+    private static void drawTexture(GuiGraphics g, SkinTexture tex, int x, int y, int w, int h) {
+        // 八倍源图在八倍坐标绘制后缩回；九宫格边角因此仍是逻辑尺寸，不会跟长消息被拉大。
+        g.pose().pushPose();
+        try {
+            g.pose().translate(x, y, 0);
+            g.pose().scale(1f / tex.scale(), 1f / tex.scale(), 1f);
+            if (tex.border() > 0) {
+                GuiUtil.drawNineSlice(g, tex.location(), 0, 0, w * tex.scale(), h * tex.scale(),
+                        tex.width(), tex.height(), tex.border());
+            } else {
+                GuiUtil.drawTexture(g, tex.location(), 0, 0, w * tex.scale(), h * tex.scale(), tex.width(), tex.height());
+            }
+        } finally {
+            g.pose().popPose();
+        }
+    }
+
+    /**
+     * 画机身外壳 —— 与 {@link #draw} 的差别是它<b>按机身形状</b>切九宫格，而不是整张拉伸。
+     *
+     * 整张拉伸只在"目标就是手机机身"时才对。平板机身 256×184，把一张 136×216 的外壳
+     * 抻上去，那一圈边会变成左右 15 像素宽、上下 7 像素高 —— 边框不再是均匀的一圈，
+     * 左右两侧还会盖住 7 像素的屏幕内容。九宫格切开之后四条边只沿自己那个方向拉，
+     * 粗细保持 8 像素不变。
+     *
+     * 手机上目标正是设计尺寸，切出来与从前<b>逐像素相同</b>，见
+     * {@link GuiUtil#drawNineSliceScaled}。
+     *
+     * @param corner 四角在<b>目标</b>上留多少像素不拉伸。要盖得住外壳贴图的圆角
+     *               （建议半径不超过 11）。贴图自己用 {@code mcphone_skin.border} 声明过的话
+     *               以它为准，那一条按源图像素算
+     * @return 有贴图并画了才 true；没有贴图时调用方自己画兜底的那一圈
+     */
+    public static boolean drawFrame(GuiGraphics g, int x, int y, int w, int h, int corner) {
+        return drawFrame(g, x, y, w, h, corner, null);
+    }
+
+    /**
+     * 同上，但先问一句"这是哪台设备"。
+     *
+     * 平板先找 {@link Element#FRAME_TABLET}，找不到再退回手机那张 {@link Element#FRAME}。
+     * 两张图的<b>设计尺寸不一样</b>（256×184 对 136×216），而九宫格要按设计尺寸换算源图上的
+     * 边角有多大，所以选哪张与按哪个尺寸切必须一起定，不能分两处。
+     *
+     * @param device 这一圈框的是哪台设备的机身；{@code null} 表示"不是一台设备"——
+     *               末影箱、唱片仓这类容器界面自己定尺寸，一律走手机那张
+     */
+    public static boolean drawFrame(GuiGraphics g, int x, int y, int w, int h, int corner,
+                                    @Nullable DeviceMetrics device) {
+        if (w <= 0 || h <= 0) return false;
+
+        DeviceMetrics design = DeviceMetrics.PHONE;
+        SkinTexture tex = null;
+        if (device != null && device.landscape()) {
+            tex = resolve(Element.FRAME_TABLET).orElse(null);
+            if (tex != null) design = device;
+        }
+        if (tex == null) tex = resolve(Element.FRAME).orElse(null);
+        if (tex == null) return false;
+
+        // 贴图自己声明了 border 就照它来 —— 那是【源图像素】，与聊天气泡那类 1× 贴图
+        // 同一套规矩。资源包既然写了元数据，就该是它说了算，行为与从前一字不差
+        if (tex.border() > 0) {
+            drawTexture(g, tex, x, y, w, h);
+            return true;
+        }
+
+        GuiUtil.drawNineSliceScaled(g, tex.location(), x, y, w, h, tex.width(), tex.height(),
+                design.totalWidth(), design.totalHeight(), corner);
+        return true;
+    }
+
+    /** 这个元素有没有贴图。给贴图与兜底形状不一样的地方用（如相册删除键），画之前就要知道走哪一支 */
+    public static boolean has(Element element) {
+        return resolve(element).isPresent();
+    }
+
+    /** 浅色输入底需要深字；旧资源包未声明时仍用原来的白字，不猜测贴图颜色。 */
+    public static int textColor(Element element, int fallback) {
+        SkinTexture texture = resolve(element).orElse(null);
+        return texture != null && texture.textColor() != null ? texture.textColor() : fallback;
+    }
+
+    /** 画贴图；没有贴图则用兜底色填满同一区域 */
+    public static void drawOrFill(GuiGraphics g, Element element,
+                                  int x, int y, int w, int h, int fallbackColor) {
+        drawOrFill(g, element, x, y, w, h, fallbackColor, false);
+    }
+
+    /**
+     * 与上面那个一样，外加"这一下要不要提亮"。
+     *
+     * 【贴图改不了颜色】。悬停、按下这类状态，在只有兜底色的年代是换一个颜色画出来的，
+     * 一旦这个位上真有了贴图，那个颜色就再也没人看得见——状态跟着一起消失，而且不报错。
+     * 有贴图时只能整张按倍数提亮：资源包画的是什么颜色，亮起来还是那个颜色。
+     *
+     * 兜底色那条路【不】跟着提亮：调用方给的颜色本来就是按状态挑的，再亮一次就过了。
+     */
+    public static void drawOrFill(GuiGraphics g, Element element,
+                                  int x, int y, int w, int h, int fallbackColor,
+                                  boolean highlight) {
+        if (highlight) {
+            float b = PhoneTheme.SKIN_HOVER_BRIGHTNESS;
+            g.setColor(b, b, b, 1.0F);
+        }
+        boolean drawn = draw(g, element, x, y, w, h);
+        // 必须在画兜底色之前还原：setColor 会一路乘到后面画的每一样东西上
+        if (highlight) g.setColor(1.0F, 1.0F, 1.0F, 1.0F);
+
+        if (!drawn) g.fill(x, y, x + w, y + h, fallbackColor);
+    }
+
+    private static Optional<SkinTexture> resolve(Element element) {
+        return CACHE.computeIfAbsent(element, PhoneSkin::probe);
+    }
+
+    /** 查资源管理器：贴图在不在，多大 */
+    private static Optional<SkinTexture> probe(Element element) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null) return Optional.empty();
+
+        Optional<SkinTexture> found = read(mc, element.texture());
+        if (found.isPresent()) return found;
+
+        if (element.legacyTexture() == null) return Optional.empty();
+
+        found = read(mc, element.legacyTexture());
+        if (found.isPresent()) {
+            MCphone.LOGGER.info(
+                    "[MCphone] 贴图 {} 走的是老路径。新路径是 {}，建议资源包跟进——"
+                    + "老路径还能用，但将来会去掉",
+                    element.legacyTexture(), element.texture());
+        }
+        return found;
+    }
+
+    /** 读一张贴图并量出尺寸。不存在或不是合法 PNG 时返回 empty */
+    private static Optional<SkinTexture> read(Minecraft mc, ResourceLocation loc) {
+        Optional<Resource> res = mc.getResourceManager().getResource(loc);
+        if (res.isEmpty()) return Optional.empty();
+
+        try (InputStream in = res.get().open()) {
+            int[] size = readPngSize(in);
+            if (size == null) {
+                MCphone.LOGGER.warn("[MCphone] {} 不是有效的 PNG，忽略", loc);
+                return Optional.empty();
+            }
+            int border = 0;
+            int scale = 1;
+            Integer textColor = null;
+            try {
+                SkinMetadata metadata = PhoneSkinMetadata.read(res.get());
+                ResourceLocation metaLocation = ResourceLocation.fromNamespaceAndPath(
+                        loc.getNamespace(), loc.getPath() + ".mcmeta");
+                boolean samePack = mc.getResourceManager().getResource(metaLocation)
+                        .map(meta -> meta.sourcePackId().equals(res.get().sourcePackId())).orElse(false);
+                metadata = effectiveSkinMetadata(metadata, samePack);
+                int requested = metadata.border();
+                if (requested > 0 && requested <= (Math.min(size[0], size[1]) - 1) / 2) {
+                    border = requested;
+                }
+                scale = metadata.scale();
+                textColor = metadata.textColor();
+            } catch (Exception e) {
+                MCphone.LOGGER.warn("[MCphone] {} 的圆角元数据无效，使用整张拉伸: {}", loc, e.toString());
+            }
+            return Optional.of(new SkinTexture(loc, size[0], size[1], border, scale, textColor));
+        } catch (Exception e) {
+            MCphone.LOGGER.warn("[MCphone] 读取贴图 {} 失败: {}", loc, e.toString());
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * 在新老路径之间挑一个真实存在的，给不走 Element 那套的调用方（内建 App 图标）用。
+     * 两个都不存在时返回新路径：让原版画紫黑格，比悄悄什么都不画好排查。
+     */
+    public static ResourceLocation resolveWithLegacy(ResourceLocation preferred,
+                                                     ResourceLocation legacy) {
+        return PATH_CACHE.computeIfAbsent(preferred, p -> {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null) return p;
+            if (mc.getResourceManager().getResource(p).isPresent()) return p;
+            if (mc.getResourceManager().getResource(legacy).isPresent()) {
+                MCphone.LOGGER.info(
+                        "[MCphone] 贴图 {} 走的是老路径。新路径是 {}，建议资源包跟进",
+                        legacy, p);
+                return legacy;
+            }
+            return p;
+        });
+    }
+
+    /** 从 PNG 头部（前 24 字节）读出 {宽, 高}，不解码整张图；不是合法 PNG 返回 null */
+    private static int[] readPngSize(InputStream in) throws Exception {
+        byte[] head = in.readNBytes(24);
+        if (head.length < 24) return null;
+
+        // 校验 IHDR 标识，避免把别的格式当成 PNG 读出天文数字般的尺寸
+        if (head[12] != 'I' || head[13] != 'H' || head[14] != 'D' || head[15] != 'R') {
+            return null;
+        }
+
+        int width = readInt(head, 16);
+        int height = readInt(head, 20);
+        if (width <= 0 || height <= 0) return null;
+
+        return new int[]{width, height};
+    }
+
+    private static int readInt(byte[] b, int offset) {
+        return ((b[offset] & 0xFF) << 24)
+             | ((b[offset + 1] & 0xFF) << 16)
+             | ((b[offset + 2] & 0xFF) << 8)
+             | (b[offset + 3] & 0xFF);
+    }
+}

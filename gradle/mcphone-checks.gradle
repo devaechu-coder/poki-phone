@@ -1,0 +1,1614 @@
+// ============================================================
+//  各平台共用的构建校验
+// ============================================================
+//
+// 这个文件由每个平台的 build.gradle 用 apply from 引入，只写一次。
+//
+// 为什么不留在各平台里
+//
+// 这几道闸（SPI 服务文件、dist 隔离、断言测试、Java 17 兼容、旧 jar 清理）与
+// Minecraft 版本、加载器都无关 —— 它们守的是本仓自己的规矩。留在各平台的
+// build.gradle 里，第二个平台进来时就会被复制粘贴一份，然后两份慢慢长歪：
+// 改了一处忘了另一处，而闸不响正是最难发现的那种坏。
+//
+// 【路径约定】这个脚本假定平台工程在 platforms/<目标名>/ 下，即仓库根是 ../..。
+// 下面用 repoRoot 显式算出来并校验，挪了位置会当场失败而不是静默扫空目录 ——
+// 扫空目录的闸永远是绿的。
+def repoRoot = file('../..')
+apply from: "${projectDir}/../../gradle/mcphone-changelog.gradle"
+if (!new File(repoRoot, 'gradle.properties').exists()) {
+    throw new GradleException(
+            "从 ${projectDir} 往上两级找不到仓库根（${repoRoot.canonicalPath} 里没有 " +
+            "gradle.properties）。这个脚本假定平台工程在 platforms/<目标名>/ 下。")
+}
+
+// ============================================================
+//  SPI 服务文件校验
+// ============================================================
+//
+// META-INF/services/ 里写的是全限定类名，纯文本，编译器一个字都不看。类改名
+// 或搬包之后忘了同步这里，构建照样成功，jar 照样能装——只是运行时 ServiceLoader
+// 一个实现都找不到，手机里空空如也，而且不报错。
+//
+// 1.2.11 那次把 128 个文件重排包结构时就差点这么发出去。这个失败模式没有任何
+// 现成的东西挡得住，只能自己在构建期校验一遍：文件里写的每一个类，编译产物里
+// 必须真的存在。
+//
+// 挂在 check 上而不是只在发版时跑：这种错要在本地 build 就炸出来，而不是等到
+// CI 或者玩家装上之后。
+tasks.register('verifyServiceFiles') {
+    description = '校验 META-INF/services 里写的类都真实存在'
+    group = 'verification'
+
+    dependsOn tasks.named('compileJava')
+
+    def servicesDir = file('../../shared/src/main/resources/META-INF/services')
+    def classesDir = layout.buildDirectory.dir('classes/java/main')
+
+    inputs.dir(servicesDir).optional()
+    inputs.dir(classesDir).optional()
+
+    doLast {
+        // 目录不在就是【发现逻辑坏了】，不是"没有 SPI 文件"。
+        //
+        // 这道闸刚刚跨过一次目录边界（services 从平台挪进了 shared），还会再跨：
+        // 1.20.1 那支可能要自己的一份。悄悄早退的话，这道闸会一声不响地全绿，
+        // 唯一的信号是末尾那行"校验通过：N 个类"消失 —— 而没有任何东西盯着它出现。
+        //
+        // 它守的东西比别的闸更狠：SPI 文件里写的是全限定类名，编译器一个字都不看，
+        // 对不上的后果是运行时 ServiceLoader 一个实现都找不到、手机里空空如也，
+        // 【而且不报错】。与 assertTests 那条"一份都没找到就抛"同一个道理。
+        // 实测：目录整个不在时，Gradle 自己的输入校验会先于这里报错（信息也够清楚），
+        // 所以下面这句实际只在输入校验被放宽时才轮得到。留着不删 —— 它是这条判据的
+        // 落笔处，而"目录在但空了"那条（见下面 total == 0）用的就是同一个理由。
+        if (!servicesDir.exists()) {
+            throw new GradleException(
+                    "找不到 ${servicesDir}。这不是\"没有 SPI 文件\"，是这道闸的路径过期了 —— " +
+                    "services 目录挪过位置，闸没跟上。就这么放行的话它会永远全绿。")
+        }
+
+        def missing = []
+        def total = 0
+        servicesDir.eachFile { f ->
+            f.eachLine('UTF-8') { line ->
+                def cls = line.replaceAll('#.*', '').trim()
+                if (cls.isEmpty()) return
+                total++
+                def classFile = classesDir.get().file(cls.replace('.', '/') + '.class').asFile
+                if (!classFile.exists()) {
+                    missing << "${f.name} -> ${cls}"
+                }
+            }
+        }
+
+        if (!missing.isEmpty()) {
+            throw new GradleException(
+                    "META-INF/services 里有 ${missing.size()} 个类不存在（多半是改名或搬包后忘了同步）:\n  "
+                            + missing.join('\n  '))
+        }
+        if (total == 0) {
+            throw new GradleException(
+                    "${servicesDir} 里一个类名都没读到。理由同上：空目录的闸永远是绿的。")
+        }
+        logger.lifecycle("SPI 服务文件校验通过：${total} 个类全部存在")
+    }
+}
+
+tasks.named('check').configure { dependsOn tasks.named('verifyServiceFiles') }
+
+// ============================================================
+//  dist 隔离校验
+// ============================================================
+//
+// 专用服务器上没有客户端类。NeoForge 的 RuntimeDistCleaner 在加载
+// net.minecraft.client.* 时直接抛异常——而触发它的不是"执行到了那句代码"，
+// 是"JVM 校验那个类"。一个类只要【常量池里写着】客户端类型，哪怕那段代码被
+// isClientSide() 挡得死死的、服务端永远执行不到，只要它在服务端被加载，
+// 就会当场崩服。1.0.44 就是这么把一台 453 个模组的服务器打崩的。
+//
+// 1.2.11 重排包结构之后，这条界线终于能用一条规则表达：
+//
+//     路径里有 /client/ 的类才准引用客户端类型，其余一概不准。
+//
+// 原来靠 gui/ 与 client/ 两个顶层包名判断，而 gui/app/BrowserApp 这种东西
+// 靠包名根本推断不出该不该算客户端——现在是断言，不是推断。
+//
+// 校验直接在 .class 字节里搜常量池：类型名在常量池里以 modified-UTF8 存着，
+// 原样搜字符串就够，不必解析 class 结构。这比读源码可靠——import 看不出
+// 校验期会加载什么。
+tasks.register('verifyDistIsolation') {
+    description = '校验非 client 包的类没有引用客户端类型'
+    group = 'verification'
+
+    dependsOn tasks.named('compileJava')
+
+    // 客户端专属的标记：常量池里出现这些就说明这个类碰了客户端
+    def clientMarkers = [
+            'net/minecraft/client/',
+            'com/mojang/blaze3d/',
+            'com/cinemamod/mcef',
+            'org/cef/',
+    ]
+
+    // 白名单。加进来的每一条都要写清楚为什么它是安全的
+    def allowed = [
+            // 客户端入口，@Mod(dist = Dist.CLIENT) 标注，服务端根本不会构造它
+            'com/november/mcphone/MCphoneClient.class',
+    ]
+
+    def classesDir = layout.buildDirectory.dir('classes/java/main')
+    inputs.dir(classesDir).optional()
+
+    doLast {
+        def root = classesDir.get().asFile
+        if (!root.exists()) return
+
+        def offenders = []
+        def checked = 0
+
+        root.eachFileRecurse { f ->
+            if (!f.name.endsWith('.class')) return
+            def rel = root.toPath().relativize(f.toPath()).toString().replace('\\', '/')
+            if (TargetNeutrality.isClient(rel)) return    // 这些包本来就准
+            if (allowed.contains(rel)) return
+            checked++
+
+            def bytes = f.getBytes()
+            def text = new String(bytes, 'ISO-8859-1')    // 逐字节，不解码
+            def hit = clientMarkers.find { text.contains(it) }
+            if (hit != null) {
+                offenders << "${rel}  （引用了 ${hit}）"
+            }
+        }
+
+        if (!offenders.isEmpty()) {
+            throw new GradleException(
+                    "dist 隔离被破坏：${offenders.size()} 个非 client 包的类引用了客户端类型。\n"
+                            + "这些类一旦在专用服务器上被加载就会当场崩服。\n  "
+                            + offenders.join('\n  '))
+        }
+        logger.lifecycle("dist 隔离校验通过：${checked} 个非 client 类，无一引用客户端类型")
+    }
+}
+
+tasks.named('check').configure { dependsOn tasks.named('verifyDistIsolation') }
+
+// ============================================================
+//  build/libs 只留最新三个 jar
+// ============================================================
+//
+// 每个改动都会把补丁号 +1，而 jar 任务从不清理旧产物：一天下来 build/libs 里
+// 躺着十几个只差一个补丁号的 jar。往服务器传的时候要在里面认哪个是最新的，
+// 认错一次就是把旧版本发上去，而那种事在服务器上表现成"改的东西没生效"，
+// 没人会想到是传错了文件。
+//
+// 留三个而不是一个：最新的那个是要传的，前两个是出事时立刻退回去的退路。
+//
+// 按文件时间排，不按版本号——版本号在这里是字符串，1.7.9 会排到 1.7.36 后面去。
+// 挂在 jar 的 finalizedBy 上：不管是 jar、assemble 还是 build，只要真打出了包就顺手清一次。
+tasks.register('pruneOldJars') {
+    description = 'build/libs 里只留最新的三个 jar'
+    group = 'build'
+
+    // 这两个要在配置期取好：doLast 里碰 project 会让配置缓存失效
+    def libsDir = layout.buildDirectory.dir('libs')
+    def prefix = "${mod_id}-"
+    def keep = 3
+
+    doLast {
+        def dir = libsDir.get().asFile
+        if (!dir.exists()) return
+
+        def jars = dir.listFiles({ File f ->
+            f.isFile() && f.name.startsWith(prefix) && f.name.endsWith('.jar')
+        } as FileFilter)
+        if (jars == null || jars.length <= keep) return
+
+        jars.toList()
+                .sort { a, b -> b.lastModified() <=> a.lastModified() }
+                .drop(keep)
+                .each {
+                    logger.lifecycle("删掉旧 jar：${it.name}")
+                    it.delete()
+                }
+    }
+}
+
+tasks.named('jar').configure { finalizedBy tasks.named('pruneOldJars') }
+
+// ============================================================
+//  断言测试
+// ============================================================
+//
+// docs/ 下那几份 *Test.java 是带 main() 的独立断言测试。不用 JUnit 是因为
+// 它们要的是【真实的 Minecraft 类路径】——NbtOps、FriendlyByteBuf、UUIDUtil
+// 都是真货，测的就是"这些东西凑在一起对不对"，换成 mock 就什么都没测到。
+// 每份自己数断言、自己汇总，失败时 System.exit(1)。
+//
+// 它们守的是没有别的守卫的地方：ChatMessage 的存档格式（整份聊天记录是一个
+// Codec 解出来的，中间一条读不懂，结果不是"少一条消息"而是全服记录一起消失）、
+// GIF 拆帧、图片编码、会话键、天气与世界时钟的取值。这几样出事时都是静默的。
+//
+// 【问题是它们一直没进构建】。跑法写在各自的类注释里，靠人手动 javac + java
+// 跑一遍——也就是说没人跑的时候，它们等于不存在。十二万条断言全绿过，但那是
+// 某一次、某个人、在自己机器上的事。
+//
+// 现在挂在 check 上，跟着每一次 ./gradlew build 跑。
+//
+// ⚠ 仓库改成 platforms/<目标名>/ 之后，workflow 还没跟上（它们仍在找仓库根的
+// ./gradlew）。发版要改成"遍历 versions/targets.json 里所有 buildable 的目标、
+// 逐个构建、把全部 jar 挂在同一个 Release 上"，那一轮之前 CI 是红的。
+//
+// docs/AddonApiExamples.java 没有 main()，所以只编不跑——而"编得过"本身就是
+// 它该受的那道校验：对外 API 的示例代码不能是编不过的。
+
+def assertTestsClasses = layout.buildDirectory.dir('classes/assert-tests')
+def assertTestsResources = layout.buildDirectory.dir('resources/assert-tests')
+def assertionLanguage = assertTestsResources.map { it.file('assets/minecraft/lang/en_us.json') }
+def assertionMessages = '{"mcphone.script.client_function.failed":"Page action failed.","mcphone.script.http_callback.failed":"Request callback failed."}'
+// Stable test-only resource: parallel JVMs must not create/delete a shared language file.
+tasks.register('prepareAssertTestResources') {
+    inputs.property('messages', assertionMessages)
+    outputs.file(assertionLanguage)
+    doLast {
+        def output = assertionLanguage.get().asFile
+        output.parentFile.mkdirs()
+        output.setText(assertionMessages, 'UTF-8')
+    }
+}
+// 递归而不是只扫顶层：把测试挪进子目录是个再自然不过的整理动作，而顶层写死的
+// '*.java' 遇上它是【静默少跑几份】，不是报错。
+// 【docs/ 也按层分】
+//
+// docs/ 是仓库级一份，却被【每个平台】编。而里面那几份钉字节的断言测试是照
+// 1.21.1 写的：StreamCodec 那一套 1.20.1 上根本没有，被测的类也住在 1.20.5+ 层里 ——
+// 1.20.1 那个目标一编就是 100 个错，全在 docs/。
+//
+// 判据是【被测对象住在哪一层】，不是测试文件自己有没有版本标记：
+// ChatMessageCodecTest 与 PhoneLocationCodecTest 自己一个标记都没有，但它们测的
+// ChatMessage / PhoneLocation 在 1.20.5+ 层里，1.20.1 不挂那层，自然找不到。
+//
+// 所以每一层都可以有自己的 docs/，跟源码一样按 targets.json 的 layers 接进来。
+def assertTestsSource = files(
+        fileTree('../../docs') { include '**/*.java' },
+        *mcphoneLayers.collect { layer -> fileTree(layer.docsDir) { include '**/*.java' } },
+        // 平台自己的 docs/：只对着这一个目标的实现写的测试。
+        // 1.20.1 那支的 ChatImagePacketTest / WallpaperPacketTest 就是 ——
+        // 它们测的是手写的 encode/decode，而 1.21.1 那边那几个类走 StreamCodec，
+        // 同一份测试在那边根本编不过。
+        fileTree('docs') { include '**/*.java' }
+)
+def projectToolchain = java.toolchain
+
+// 哪几份带 main()：读文件头现判，【不要】在这里维护一张手写清单。
+// 加了一份测试却忘了往清单里补，症状是"构建绿的，但那份根本没跑"——
+// 而这整节存在的理由，就是不再让"没人跑"这件事悄悄发生。
+def assertTestMains = assertTestsSource.files.toSorted { it.name }.findResults { f ->
+    def text = f.getText('UTF-8')
+    // 修饰符顺序不固定（static public void main 一样合法），所以两个词分开断言，
+    // 不写成一串固定顺序——写死的那种漏掉时也是静默的
+    if (!(text =~ /(?m)^\s*(?=[^\n]*\bpublic\b)(?=[^\n]*\bstatic\b)[^\n]*\bvoid\s+main\s*\(/)) return null
+    def pkg = (text =~ /(?m)^\s*package\s+([\w.]+)\s*;/)
+    def simple = f.name - '.java'
+    // 没写 package 的就是默认包，类名本身即全限定名。这里【不能】返回 null 悄悄丢掉它 ——
+    // 那等于给这一节留了个"有测试但不跑"的后门
+    (pkg ? "${pkg[0][1]}.${simple}" : simple).toString()
+}
+
+// 一份都没找到时怎么办，见下面 assertTests 的 doFirst：
+// 【绝不能】当成"没有测试"往下走。
+
+tasks.register('compileAssertTests', JavaCompile) {
+    description = '编译 docs/ 下的断言测试与 API 示例'
+    group = 'verification'
+
+    source = assertTestsSource
+    // 主源码的产物 + 它的编译类路径：与各测试类注释里那条手写的 javac 命令等价
+    classpath = files(sourceSets.main.output, sourceSets.main.compileClasspath)
+    destinationDirectory = assertTestsClasses
+    javaCompiler = javaToolchains.compilerFor(projectToolchain)
+}
+
+// 一份测试一个 JavaExec 任务，而不是在 doLast 里 javaexec ——
+// 后者在配置缓存下不成立（本工程 org.gradle.configuration-cache=true）。
+def assertTestTasks = assertTestMains.collect { fqcn ->
+    def simple = fqcn.substring(fqcn.lastIndexOf('.') + 1)
+    tasks.register("assertTest${simple}", JavaExec) {
+        description = "跑 ${simple}"
+        group = 'verification'
+        dependsOn tasks.named('compileAssertTests'), tasks.named('prepareAssertTestResources')
+        classpath = files(assertTestsResources, assertTestsClasses, sourceSets.main.output, sourceSets.main.compileClasspath)
+        mainClass = fqcn
+        javaLauncher = javaToolchains.launcherFor(projectToolchain)
+    }
+}
+
+tasks.register('assertTests') {
+    description = '跑 docs/ 下所有带 main() 的断言测试'
+    group = 'verification'
+    dependsOn assertTestTasks
+
+    def names = assertTestMains.collect { it.substring(it.lastIndexOf('.') + 1) }
+
+    // 一份都没发现，绝不能当成"没有测试"就放行。
+    //
+    // 发现逻辑坏掉的方式不需要多离奇：docs/ 改个名、测试整体搬走、上面那个正则被
+    // 一次格式化打断。而它坏掉之后 compileAssertTests 是 NO-SOURCE、这个任务没有
+    // 任何依赖，check 照样全绿 —— 十二万条断言一条没跑，没有任何东西会告诉你。
+    // 「手写清单漏一条」与「整张清单为空」是同一个病的两种得法，这一节两种都要堵。
+    //
+    // 放在 doFirst 而不是配置期：配置期抛会连 ./gradlew tasks 和 IDE 的工程同步
+    // 一起打死，而这道断言只在"真要跑测试"时才有意义。挂在 check 上，CI 照样跑得到。
+    doFirst {
+        if (names.isEmpty()) {
+            throw new GradleException(
+                    'docs/ 下一份带 main() 的断言测试都没找到。\n' +
+                    '这不是"没有测试"，是发现逻辑坏了：文件被挪走或改名，或者判 main() 的那个正则失效了。\n' +
+                    '就这么放行的话 check 会全绿，而断言一条都没跑。')
+        }
+    }
+
+    // 把"跑了几份、跑了哪几份"印出来。上面那条只挡得住"一份都没有"，
+    // 少跑几份仍然是静默的 —— 这一行是留给人看的那道防线，CI 日志里翻得到
+    doLast { logger.lifecycle("断言测试 ${names.size()} 份跑完：${names.join('、')}") }
+}
+
+tasks.named('check').configure { dependsOn tasks.named('assertTests') }
+
+// 【这里没有 Java 17 兼容校验】。shared/ 的 Java 17 兼容性由 1.20.1-forge 在 CI 里
+// 真编一遍守着；那个前提本身由 build.yml 的 guard-version「六点八」拦着。
+//
+// 真要重新加一道，先看这两条实测，别重新踩：
+//
+//   拦库方法只有 --release 有效。-source 17 -target 17 只管语法：JDK 21 的 javac 对
+//   List.getFirst / Math.ceilDiv / HashMap.newHashMap / Math.clamp / StringBuilder.repeat
+//   这五个 18~21 新增的方法一个都不拦，--release 五个全拦。
+//
+//   --release 不碰用户 classpath。拿 neoforge-21.1.248-merged.jar 加 --release 17
+//   编全树，266 个文件，退出码 0。
+
+// ============================================================
+//  目标中立判据（下面两道闸共用一份）
+// ============================================================
+//
+// 「这段代码只在某一个目标上成立吗」—— 这个问题在本文件里有两个用处：
+//
+//   verifySharedIsTargetNeutral  shared/ 里出现这种东西 → 红
+//   verifySeamsDocCurrent        platforms/ 里的类有没有这种东西 → 决定它算甲还是乙
+//
+// 【它们必须是同一份判据】。原先是两份，隔着一百行，其中拦门的那份少两条 ——
+// 于是仓库自己在 shared/PLATFORM-SEAMS.md 里写着 ModPresence 和 PhonePlayerData
+// 是接缝，而拦门的闸对它们一声不吭。ModPresence 尤其荒唐：这个类存在的全部理由
+// 就是"全仓唯一碰 ModList 的地方"，把它搬进 shared/ 是这套结构里最纯粹的错误。
+//
+// 两份判据长得像但不一样，是最难发现的一种坏：两处都在，都像在工作，
+// 只有把它们并排放才看得出少了什么。所以现在只有这一份。
+//
+// 【四条判据，为什么是这四条】
+//
+//   加载器导入   net.neoforged / net.minecraftforge / net.fabricmc / cpw.mods。
+//                最直白的一条，也是唯一能靠扫 import 抓全的。
+//   1.20.5+ 原版  StreamCodec 那一套。1.20.1 上 net.minecraft.network.codec 这个包
+//                根本不存在。
+//   注入的方法    player.getData(...) 是 NeoForge 装在 Entity 上的、getCapability(...)
+//                是 Forge 的。【这一类没有 import，扫 import 一个都看不见】——
+//                PhonePlayerData 就是这么从甲漏进乙的。
+//   组件读写      stack.get(ModDataComponents...)。同上，是 vanilla ItemStack 上的
+//                方法，1.20.5 起才有。【不能只盯 ModDataComponents 这个名字】：
+//                那是本模组自己的类，各平台各给一份是合法接缝；炸的是那个方法本身。
+//
+// 【已知盲区：签名漂移】。方法名没变、签名变了（客户端渲染那套尤其多），名字和
+// 导入都一样。只有拿另一个版本真编一遍才知道，这一层这里补不上 —— 所以这四条
+// 是替身，不是真判据。真判据是 1.20.1 那个目标进来之后由它自己的构建来守。
+//
+// 【为什么写成类】：脚本顶层的方法与闭包在开了配置缓存之后从 doLast 里调不到
+// （实测报 "Could not find method"）。类里的 helper 也不能是 private static ——
+// 闭包走动态派发，看不见私有方法，同样的报错。
+abstract class TargetNeutrality {
+
+    /**
+     * 判据表。名字会原样印进报错和 PLATFORM-SEAMS.md 的清单里。
+     *
+     * 【一张表，不是两张】。轴写在这里的 axes 里，不另开一张按名字对齐的表 ——
+     * 并排放两张必须逐键对齐的表，没有任何东西保证它们对齐：往这张加第五条判据、
+     * 忘了往那张补一行，取到的轴是 null，随后在分组时抛一个裸 NPE，
+     * 而真正的原因（少了一行）要自己回溯出来。合成一张之后没有对不齐这回事。
+     *
+     * 【axes 可以有两个】。「这条判据挡在哪个轴上」不是单选：
+     * NeoForge 的 Data Attachment 既只有 NeoForge 有（加载器轴），又是 NeoForge 20.3
+     * 才引入的（版本轴）—— 20.1.x 那条线即 Minecraft 1.20.1，在它之前，那边只能用
+     * 能力。写成单轴会让 PhonePlayerData 落进「仅加载器轴」，而那一组的提示是
+     * 「同一加载器的各个 Minecraft 版本可共用」—— 对它是错的，且那句话正要指导下一步。
+     */
+    static final Map<String, Map> BLOCKERS = [
+            '加载器导入': [
+                    axes   : ['加载器'],
+                    pattern: ~/(?m)^[ \t]*import[ \t]+(?:static[ \t]+)?(?:net\.neoforged|net\.minecraftforge|net\.fabricmc|cpw\.mods)\./,
+            ],
+            '1.20.5+ 原版': [
+                    axes   : ['版本'],
+                    pattern: ~/\b(?:StreamCodec|ByteBufCodecs|RegistryFriendlyByteBuf|CustomPacketPayload|DataComponent\w*)\b/,
+            ],
+            '注入的方法': [
+                    // 【两轴】：getData/setData 是 NeoForge 的 Data Attachment，
+                    // getCapability 是能力 —— 都只有某一个加载器有（加载器轴），
+                    // 而且都在该加载器的某一版才成形（版本轴）。
+                    axes   : ['加载器', '版本'],
+                    pattern: ~/\.\s*(?:getData|setData|hasData|removeData|getCapability)\s*\(/,
+            ],
+            '组件读写': [
+                    axes   : ['版本'],
+                    pattern: ~/\.\s*(?:getOrDefault|remove|has|get|set)\s*\(\s*[\w$.]*DataComponents?\s*[.<]/,
+            ],
+    ].asImmutable()
+
+    /**
+     * 什么算客户端代码 —— 【本文件里只此一处】。
+     *
+     * 收 FQCN（{@code a.b.client.C}）也收类文件路径（{@code a/b/client/C.class}）。
+     * dist 隔离校验与接缝清单都用它：同一个概念散成两处写法，下次谁调整
+     * 「什么算客户端」就会只改到一处。
+     */
+    static boolean isClient(String fqcnOrPath) {
+        return fqcnOrPath.contains('.client.') || fqcnOrPath.contains('/client/')
+    }
+
+    /**
+     * 去掉块注释、行注释与字符串/字符字面量的<b>内容</b>，只留真代码。
+     * 换行原样留着，行号才对得上。
+     *
+     * 【为什么必须去】：shared/ 里正有文件在注释里解释 "1.20.1 上没有 StreamCodec"，
+     * 直接扫原始文本会把它们当成违规 —— 那种误报会让人把整道闸关掉。字符串同理：
+     * 一句日志文案里出现 StreamCodec 不是违规。
+     *
+     * 【别拿它做孪生比对】—— 用 {@link #stripComments}，理由见那个方法。
+     */
+    static String strip(String src) {
+        return scrub(src, true)
+    }
+
+    /**
+     * 只去注释，<b>字符串字面量原样保留</b>。孪生比对用这一个。
+     *
+     * 【为什么不能共用 strip】：那个方法把字符串内容整个丢掉，于是两份只差一个翻译键、
+     * 一句日志文案、一个资源路径的文件，在它眼里<b>一模一样</b>。而孪生闸对「一模一样」
+     * 的反应是印一句「这一对一字不差，还没搬进 shared/」—— 那是一条可执行指令，
+     * 照着搬就是把两种行为合成一份，而且两边都编得过、两边都绿。
+     *
+     * 判据扫描要的是「代码里有没有碰那个 API」，字符串不算；孪生比对要的是「这两份是不是
+     * 同一段代码」，字符串<b>算</b>。同一个函数服务不了这两个问题。
+     *
+     * 实测：本轮装闸时全仓 0 对受影响，是潜在的不是已发生的 —— 但那道闸给的是指令，
+     * 不是提示。
+     */
+    static String stripComments(String src) {
+        return scrub(src, false)
+    }
+
+    /**
+     * 注释与字面量的扫描器。{@code blankStrings} 决定字符串留不留内容。
+     *
+     * 【不能是 private】：闭包走动态派发，看不见私有方法（实测报 "Could not find method"）。
+     *
+     * 【扫不到闭合就抛，不静默吞】：原先的写法在找不到收尾引号时把 j 一路推到文件尾，
+     * 于是<b>那一行之后的全部代码从结果里消失</b> —— 判据扫了个空，孪生比对看到两份都被
+     * 截短，结果是全绿。字符串不能跨行，所以遇到换行就是扫描器错位了，当场说出来。
+     */
+    static String scrub(String src, boolean blankStrings) {
+        def out = new StringBuilder(src.length())
+        int i = 0, n = src.length()
+        while (i < n) {
+            char c = src.charAt(i)
+            if (c == ('/' as char) && i + 1 < n && src.charAt(i + 1) == ('*' as char)) {
+                int j = src.indexOf('*/', i + 2)
+                int stop = (j < 0) ? n : j + 2
+                for (int k = i; k < stop; k++) if (src.charAt(k) == ('\n' as char)) out.append('\n')
+                i = stop
+            } else if (c == ('/' as char) && i + 1 < n && src.charAt(i + 1) == ('/' as char)) {
+                int j = src.indexOf('\n', i)
+                i = (j < 0) ? n : j
+            } else if (c == ('"' as char) && src.startsWith('"""', i)) {
+                // 文本块。仓库眼下一个都没有，但它一进来就会让按单引号配对的扫描器错位，
+                // 而错位的后果是安静地吞掉后面所有代码 —— 所以先把它认出来
+                int j = src.indexOf('"""', i + 3)
+                if (j < 0) {
+                    throw new GradleException(
+                            "第 ${src.substring(0, i).count('\n') + 1} 行有一个没闭合的文本块（\"\"\"）。\n" +
+                            "扫描器到这里就走不下去了，再往下的代码会整段从结果里消失 —— 那会让闸全绿。")
+                }
+                int stop = j + 3
+                if (blankStrings) {
+                    out.append('""')
+                    for (int k = i; k < stop; k++) if (src.charAt(k) == ('\n' as char)) out.append('\n')
+                } else {
+                    out.append(src, i, stop)
+                }
+                i = stop
+            } else if (c == ('"' as char) || c == ("'" as char)) {
+                char quote = c
+                int j = i + 1
+                while (j < n && src.charAt(j) != quote && src.charAt(j) != ('\n' as char)) {
+                    j += (src.charAt(j) == ('\\' as char)) ? 2 : 1
+                }
+                if (j >= n || src.charAt(j) != quote) {
+                    throw new GradleException(
+                            "第 ${src.substring(0, i).count('\n') + 1} 行有一个没闭合的字符串或字符字面量。\n" +
+                            "Java 的字符串不能跨行，所以这多半是扫描器错位了。\n" +
+                            "就这么放过去的话，这一行之后的代码会整段从结果里消失，闸会全绿。")
+                }
+                if (blankStrings) {
+                    out.append(quote).append(quote)
+                } else {
+                    out.append(src, i, j + 1)
+                }
+                i = j + 1
+            } else {
+                out.append(c)
+                i++
+            }
+        }
+        return out.toString()
+    }
+
+    /** 逐处命中：[[判据名, 行号, 匹配到的文本], …]。传进来的必须是 strip 过的。 */
+    static List<List> hits(String code) {
+        def out = []
+        BLOCKERS.each { name, spec ->
+            def m = spec.pattern.matcher(code)
+            while (m.find()) {
+                out << [name, code.substring(0, m.start()).count('\n') + 1, m.group().trim()]
+            }
+        }
+        return out.toSorted { a, b -> a[1] <=> b[1] ?: (a[0] <=> b[0]) }
+    }
+
+    /** 这个文件命中了哪几条判据（去重、排序）。 */
+    static List<String> tagsOf(String rawSource) {
+        return hits(strip(rawSource)).collect { it[0] }.unique().toSorted()
+    }
+}
+
+// ============================================================
+//  shared/ 目标中立校验
+// ============================================================
+//
+// shared/ 的定义是【每个目标都能原样编过】。矩阵最老的一档是 1.20.1，加载器有三个 ——
+// shared/ 里出现只在某一个目标上成立的东西，就是把别的目标编炸了，而这边
+// （NeoForge 1.21.1）编得好好的，什么都不会说。
+//
+// 这道闸是怎么补上的：PhoneItemData 曾经被搬进 shared/。它自己的类注释就写着
+// "方法体注定不同"，同时六处用了 ItemStack 的数据组件读写。搬进去、构建全绿、
+// 没有任何东西响 —— 因为当时【没有任何机器判据管这件事】，只有人工判断，而
+// shared/ 正在一批一批地长。
+//
+// 【为什么不叫"版本中立"】。它第一版只管 1.20.5+ 的原版 API，名字就叫版本中立，
+// 于是"加载器导入"和"注入的方法"两条没被写进来 —— 名分挡住了该管的事。
+// shared/ 里出现 import net.neoforged.* 当时是零守卫的：verifyDistIsolation 只看
+// 客户端类型，当时那道 Java 17 兼容校验只换 java.* 的签名，接缝清单那道只扫
+// platforms/ 一侧的文件。现在四条判据都在 TargetNeutrality 里，一处定义。
+//
+// 【这不是真判据，是替身】
+//
+// 真判据只有一条：拿 1.20.1 的类路径把 shared/ 编一遍。等 1.20.1 那个目标进来
+// 就该由它来守，这道闸到那时可以退成冗余。在那之前这条线上一个守卫都没有，
+// 而这恰恰是最需要守卫的阶段 —— 判据要等到最危险的时期过去之后才出现。
+//
+// 【没有豁免名单】。被拦住的正确做法是把文件搬回 platforms/，各平台各给一份
+// （PhonePlayerData / ModDataComponents 就是这么办的）—— 不是往名单里加一行。
+// 加了名单，这道闸就只剩装饰。
+//
+// ⚠ 【接了预处理器之后要改】。等 shared/ 里开始出现按版本切换的标记，
+// 同一个文件里 1.20.5+ 的分支是合法的，这道闸得先按目标裁一遍源码再扫，
+// 而不是直接看原始文本。在那之前它按现在这样是对的。
+abstract class SharedNeutralityTask extends DefaultTask {
+
+    /** 【必须 @Optional】：populated: false 的层在克隆下来的仓库里没有这个目录。 */
+    @InputDirectory @Optional abstract DirectoryProperty getSharedDir()
+    /**
+     * 这一层的资源目录。
+     *
+     * 【显式传，不从 java 目录的父目录推】：java 目录不存在时（只放资源的层）
+     * 推不出来，于是资源数按 0 算，populated: true 的层就会被误判成空。踩过。
+     */
+    @InputDirectory @Optional abstract DirectoryProperty getResourcesDir()
+    /**
+     * 这一层的 docs 目录（带 main() 的断言测试）。
+     *
+     * 一个层可以【只有 docs/】：neoforge 层眼下就是这样，里面只有
+     * AddonApiExamples —— 附属接口文档那份可编译副本，它 import 的 Tags 是
+     * NeoForge 专有的。所以「这一层有没有内容」必须把 docs 也算进去。
+     */
+    @InputDirectory @Optional abstract DirectoryProperty getDocsDir()
+    /** 这一层禁哪些轴：'版本' / '加载器'。 */
+    @Input          abstract ListProperty<String> getForbiddenAxes()
+    /**
+     * 这一层【现在该不该有内容】。
+     *
+     * 【不是「允不允许为空」】。层可以先声明后填，但"空"要是显式声明的状态：
+     * 声明了有内容却扫不到文件要红，声明了没内容却扫到了也要红（声明过期了）。
+     * 默认容忍空的话，本该有内容的层被清空、或者层名与目录名对不上而指到一个恰好
+     * 存在的空目录，都只会在日志里留一行，而这个文件里别处（assertTests、
+     * verifyServiceFiles、shared/）对同一个问题给的答案都是"抛"。
+     */
+    @Input          abstract Property<Boolean> getPopulated()
+    /** 报错里怎么称呼这一层。 */
+    @Input          abstract Property<String> getLayerName()
+    @TaskAction
+    void run() {
+        def forbidden = forbiddenAxes.get() as Set
+        def layer = layerName.get()
+        File dir = sharedDir.isPresent() ? sharedDir.get().asFile : null
+
+        // 取不到前提要红，不能静默扫空目录 —— 扫空目录的闸永远是绿的
+        // 【java 目录可以不存在】：只放资源的层、以及还没开始填的层都是正当的。
+        // 「该在却不在」那一关由 populated 在 mcphone-layers.gradle 里管，走不到这儿。
+        def files = []
+        if (dir != null && dir.isDirectory()) {
+            dir.eachFileRecurse { if (it.isFile() && it.name.endsWith('.java')) files << it }
+        }
+        // 资源也算内容：一个层可以只放数据包、一个 java 都没有
+        def resourceDir = resourcesDir.isPresent() ? resourcesDir.get().asFile : null
+        def resourceCount = 0
+        if (resourceDir != null && resourceDir.isDirectory()) {
+            resourceDir.eachFileRecurse { if (it.isFile()) resourceCount++ }
+        }
+        int docsCount = 0
+        if (docsDir.isPresent() && docsDir.get().asFile.isDirectory()) {
+            docsDir.get().asFile.eachFileRecurse { if (it.isFile()) docsCount++ }
+        }
+        boolean hasContent = !files.isEmpty() || resourceCount > 0 || docsCount > 0
+
+        if (populated.get() && !hasContent) {
+            throw new GradleException(
+                    "${layer}声明了 populated: true，但它的 src/main 下" +
+                    "一个文件都没有（java 0 个、资源 0 个、docs 0 个）。\n" +
+                    "要么内容丢了、要么层名与目录名对不上（目录由层名推出）—— " +
+                    "'一个都没扫到' 不等于 '没有问题'。\n" +
+                    "这一层确实还没开始填的话，把 layers.json 里的 populated 改成 false。")
+        }
+        if (!populated.get() && hasContent) {
+            throw new GradleException(
+                    "${layer}声明了 populated: false，却有内容" +
+                    "（java ${files.size()} 个、资源 ${resourceCount} 个、docs ${docsCount} 个）。\n" +
+                    "声明过期了，把 layers.json 里的 populated 改成 true。")
+        }
+        if (files.isEmpty()) {
+            logger.lifecycle("${layer}：没有 java（资源 ${resourceCount} 个）")
+            return
+        }
+        files = files.toSorted { it.path }
+
+        // 只留下落在被禁轴上的命中。按版本那一层允许版本轴的东西，
+        // 它存在的意义正是装这些 —— 挡的是加载器轴。
+        def offenders = [:]
+        files.each { f ->
+            def hs = TargetNeutrality.hits(TargetNeutrality.strip(f.getText('UTF-8')))
+                    .findAll { h -> TargetNeutrality.BLOCKERS[h[0]].axes.any { forbidden.contains(it) } }
+            if (hs) offenders[f] = hs
+        }
+
+        if (offenders) {
+            int total = offenders.values().sum { it.size() }
+            def sb = new StringBuilder()
+            sb << "${layer}里出现了这一层不该有的东西，共 ${total} 处 / ${offenders.size()} 个文件：\n"
+            offenders.each { f, hs ->
+                sb << "\n  ${dir.toPath().relativize(f.toPath())}\n"
+                hs.each { h ->
+                    sb << "      :${h[1]}  [${h[0]}，${TargetNeutrality.BLOCKERS[h[0]].axes.join('+')}轴]  ${h[2]}\n"
+                }
+            }
+            sb << "\n${layer}禁的轴：${forbidden.join('、')}。\n"
+            if (forbidden.contains('加载器') && !forbidden.contains('版本')) {
+                sb << "这一层给同一个 Minecraft 版本的三个加载器共用，所以版本轴的东西在这儿是合法的，\n"
+                sb << "加载器轴的不是。带加载器阻断的那些搬回 platforms/<目标名>/，各加载器各给一份。\n"
+            } else {
+                sb << "shared/ 要求每个目标都能原样编译通过：Minecraft 最老一档是 1.20.1，加载器有三个。\n"
+                sb << "\n只被版本轴挡住的，可以放进共享层（layers/version/<层名>/，见 versions/layers.json）——\n"
+                sb << "同一个版本的三个加载器共用一份。既碰版本又碰加载器的，只能回 platforms/。\n"
+            }
+            sb << "\n搬完记得 ./gradlew updateSeamsDoc。\n"
+            throw new GradleException(sb.toString())
+        }
+
+        logger.lifecycle("${layer}校验通过：${files.size()} 个文件，" +
+                (forbidden.isEmpty() ? "两个轴都钉住了，不禁" : "禁 ${forbidden.join('、')}轴"))
+    }
+}
+
+// 【两类共享目录，两套要求】
+//
+//   shared/                       全部目标共用 —— 一条判据都不许中
+//   layers/version|loader/<层名>/  版本层禁加载器轴，加载器层禁版本轴。两者对称，
+//                                 各自装的正好是对方挡掉的那一半
+//
+// 层的解析与校验【不在这儿】，在 gradle/mcphone-layers.gradle 里，由平台的
+// build.gradle 先 apply。这里只从 ext.mcphoneLayers 取结果 —— 同一段逻辑
+// 两处各写一份是这个仓库栽过三次的坑。
+if (!project.hasProperty('mcphoneLayers')) {
+    throw new GradleException(
+            "取不到 mcphoneLayers。平台的 build.gradle 要先 apply " +
+            "gradle/mcphone-layers.gradle，再 apply 这个文件 —— " +
+            "取不到就只能一层都不校验，而那是静默的。")
+}
+
+tasks.register('verifySharedIsTargetNeutral', SharedNeutralityTask) {
+    description = '校验 shared/ 里没有只在某一个目标上成立的东西'
+    group = 'verification'
+    sharedDir.set(new File(repoRoot, 'shared/src/main/java'))
+    resourcesDir.set(new File(repoRoot, 'shared/src/main/resources'))
+    forbiddenAxes.set(['版本', '加载器'])
+    populated.set(true)        // shared/ 永远不该是空的
+    layerName.set('shared/')
+}
+tasks.named('check').configure { dependsOn tasks.named('verifySharedIsTargetNeutral') }
+
+// 这个目标挂几层就注册几道，各查各的目录
+mcphoneLayers.each { layer ->
+    def taskName = 'verifyLayer' + layer.name.replaceAll(/[^A-Za-z0-9]/, '_')
+    tasks.register(taskName, SharedNeutralityTask) {
+        description = "校验共享层 ${layer.name}（${layer.kind}）" +
+                (layer.forbiddenAxes.isEmpty() ? '（两个轴都钉住了，不禁）'
+                                               : "里没有绑${layer.forbiddenAxes.join('、')}的东西")
+        group = 'verification'
+        if (layer.javaDir.isDirectory()) sharedDir.set(layer.javaDir)
+        if (layer.resourcesDir.isDirectory()) resourcesDir.set(layer.resourcesDir)
+        if (layer.docsDir.isDirectory()) docsDir.set(layer.docsDir)
+        // 【禁的是另一个轴】：版本层挡加载器专有的东西，加载器层挡版本专有的东西。
+        // 两种层是对称的，装的正好是对方挡掉的那一半。
+        // 禁哪些轴由 mcphone-layers.gradle 按「哪个轴没被钉住」算好，这里只用结果
+        forbiddenAxes.set(layer.forbiddenAxes)
+        // 空不空由 layers.json 的 populated 显式声明，不是默认容忍
+        populated.set(layer.populated)
+        layerName.set("共享层 ${layer.name}")
+    }
+    tasks.named('check').configure { dependsOn tasks.named(taskName) }
+}
+
+
+// ============================================================
+//  加载器层孪生校验
+// ============================================================
+//
+// 加载器层里同一个类会有几份 —— forge 一份、neoforge 一份，fabric 进来就是三份。
+// 它们本该<b>只差那一行加载器 import</b>，因为进这一层的判据就是「正文跨版本逐字相同、
+// 差异只在 import」。
+//
+// 【为什么这一处非要一道闸不可】
+//
+// 门面（ModPresence / Slots / StackCodecs / CuriosInventories）也是每个平台各一份，
+// 却不需要闸 —— 因为 shared/ 必须在【所有目标】上都编过，门面签名一漂移当场断构建：
+// 有一个编译单元同时看见了两份。
+//
+// 加载器层的孪生没有这个性质：每个目标只编自己那一份，两份各自都合法。实测过 ——
+// 把 neoforge 那份 RequestThrottle 的三个限流常量从 500/250 改成 999999，forge 那份
+// 一个字不动，两个目标【都是 BUILD SUCCESSFUL】。而那是一个活的行为差异：
+// 同一个模组在两个加载器上的请求限流差两千倍，玩家感觉得到，编译器一声不吭。
+//
+// 差别不在「是不是复制」，在「有没有一个编译单元同时看见两份」。
+//
+// 判据就是当初手工挑这几个文件用的那一条，现在它同时是【准入】与【保持】：
+// 去注释之后，正文必须逐字相同，import 只准差在加载器包名上。
+abstract class LoaderTwinsTask extends DefaultTask {
+
+    /** 全部加载器层的 java 根，每条 {name, dir}。 */
+    @Input abstract ListProperty<Object> getLoaderLayers()
+
+    static final java.util.regex.Pattern LOADER_PKG =
+            ~/^import\s+(?:static\s+)?(?:net\.neoforged|net\.minecraftforge|net\.fabricmc|cpw\.mods)\./
+
+    /** 【stripComments 不是 strip】：孪生比对要看字符串内容，理由见那个方法。 */
+    static List<String> lines(File f) {
+        TargetNeutrality.stripComments(f.getText('UTF-8')).split('\n').collect { it.trim() }.findAll { it }
+    }
+
+    @TaskAction
+    void run() {
+        def layers = loaderLayers.get()
+        if (layers.isEmpty()) {
+            throw new GradleException("一个加载器层都没读到 —— 扫空清单的闸永远是绿的。")
+        }
+        // FQCN -> [层名: 文件]
+        def byFqcn = [:]
+        layers.each { layer ->
+            File root = layer.dir as File
+            if (!root.isDirectory()) return
+            root.eachFileRecurse { f ->
+                if (!f.isFile() || !f.name.endsWith('.java')) return
+                def fq = root.toPath().relativize(f.toPath()).toString()
+                        .replace(File.separator, '.') - ~/\.java$/
+                byFqcn.computeIfAbsent(fq, { [:] })[layer.name] = f
+            }
+        }
+        def twins = byFqcn.findAll { fq, m -> m.size() > 1 }
+        def problems = []
+        twins.each { fq, m ->
+            def names = m.keySet().toSorted()
+            def base = names[0]
+            def baseLines = lines(m[base] as File)
+            def baseBody = baseLines.findAll { !it.startsWith('import ') }
+            def baseImp  = baseLines.findAll { it.startsWith('import ') && !LOADER_PKG.matcher(it).find() }.toSorted()
+            names.drop(1).each { other ->
+                def ls = lines(m[other] as File)
+                def body = ls.findAll { !it.startsWith('import ') }
+                def imp  = ls.findAll { it.startsWith('import ') && !LOADER_PKG.matcher(it).find() }.toSorted()
+                if (body != baseBody) {
+                    def d = []
+                    int n = Math.max(body.size(), baseBody.size())
+                    for (int i = 0; i < n && d.size() < 6; i++) {
+                        def a = i < baseBody.size() ? baseBody[i] : '（没有这一行）'
+                        def b = i < body.size() ? body[i] : '（没有这一行）'
+                        if (a != b) d << "        ${base}: ${a.take(90)}\n        ${other}: ${b.take(90)}"
+                    }
+                    problems << "  ${fq}  正文不一致（${base} ↔ ${other}）\n" + d.join('\n')
+                }
+                if (imp != baseImp) {
+                    def only = ((baseImp - imp).collect { "${base} 独有: ${it}" } +
+                                (imp - baseImp).collect { "${other} 独有: ${it}" })
+                    problems << "  ${fq}  import 差在加载器包之外（${base} ↔ ${other}）\n" +
+                                only.collect { "        ${it}" }.join('\n')
+                }
+            }
+        }
+        if (problems) {
+            throw new GradleException(
+                    "加载器层里的孪生文件漂移了，${problems.size()} 处：\n\n" +
+                    problems.join('\n\n') + "\n\n" +
+                    "进加载器层的判据是「正文跨版本逐字相同、差异只在加载器 import」——\n" +
+                    "那既是准入条件，也是【进去之后一直要满足】的条件。\n\n" +
+                    "两份各自都编得过，所以编译器不会说话：每个目标只编自己那一份，\n" +
+                    "没有任何一个编译单元同时看见它们。这道闸就是那个缺席的编译单元。\n\n" +
+                    "要么把改动同步到每一份，要么这个类根本不该在加载器层 —— \n" +
+                    "它如果开始各家各的样，那就是平台专有的东西，回 platforms/<目标名>/。")
+        }
+        // 【报实际比对了什么，不报声明了几个层】
+        //
+        // 原先这里写的是「各 ${layers.size()} 层里的同名文件正文一致」—— layers.size()
+        // 是【声明】的加载器层数（3），而 fabric 层里一个 java 都没有，实际每组只有
+        // forge / neoforge 两份。那句话读起来是「三个加载器的副本都一致」，
+        // 而那恰好是人会拿它当保证的那一句。
+        //
+        // 更要紧的是它掩盖一个真实的边：只在一个层里存在的文件不算孪生、不红
+        // （那是有意的 —— 某个类可能确实只有一个加载器有）。于是 fabric 并进来之后，
+        // 某一组漏了 fabric 那一份时这道闸不会响 —— 那就更不能让消息替它打包票。
+        def withFiles = layers.findAll { l -> (l.dir as File).isDirectory() &&
+                (l.dir as File).listFiles() != null && byFqcn.any { fq, m -> m.containsKey(l.name) } }
+                .collect { it.name }.toSorted()
+        def sizes = twins.values().collect { it.size() }
+        def bySize = sizes.countBy { it }
+        def shape = bySize.collect { n, c -> "${c} 组各 ${n} 份" }.join('，')
+        logger.lifecycle("加载器层孪生校验通过：${twins.size()} 组（${shape}），" +
+                "参与比对的层：${withFiles.join('、')}")
+
+        // 哪些层有内容、却在某些组里缺席 —— 不报错（那可能是那个加载器专有的类），
+        // 但要说出来：这正是「漏了一份」与「本来就只有一份」看起来一样的地方。
+        def gaps = []
+        twins.each { fq, m ->
+            def absent = withFiles.findAll { !m.containsKey(it) }
+            if (absent) gaps << "  ${fq}  缺：${absent.join('、')}"
+        }
+        if (gaps) {
+            logger.lifecycle("  ⚠ 下面这些组不是每个有内容的层都有一份 —— " +
+                    "可能是那个加载器专有，也可能是漏了，这道闸分不出来：")
+            gaps.each { logger.lifecycle(it) }
+        }
+    }
+}
+
+// ============================================================
+//  平台双胞胎棘轮
+// ============================================================
+//
+// 【守的是哪条线】。platforms/<目标名>/ 下同路径同名的 java 文件 —— 眼下 56 对，
+// 去注释后 86.7% 的行逐字相同。这条线上原先【一道闸都没有】：verifyLoaderTwins
+// 守的是加载器层那 12 个文件，数量少 4.6 倍，却是唯一被守着的。
+//
+// 它的论证在这里成立得更厉害：每个目标只编自己那一份，没有任何一个编译单元同时
+// 看见两份，所以两边一起绿、内容一起漂。ImageFolder 两份逐字相同躺了很久，没有
+// 任何东西说过一句话。
+//
+// 【为什么是棘轮，不是「diff 为空即红」】。空 diff 那种写法今天只有一个对象
+// （ImageFolder），把它搬进 shared/ 之后就【永久为零】，而差 51 行的那些它结构上
+// 看不见。棘轮记的是每一对当前的差异行数，只许降不许升 —— 于是「还剩多少重复」
+// 成为一个被检查的数，而不是需要每次重新量的数。
+//
+// 【两个判据】
+//
+//   逐字相同   → 红。「这一对一字不差，还没搬进 shared/」
+//   差异变大   → 红。两份漂开了
+//   差异变小   → 红，但是好消息：要求把基线跟着调下去，否则棘轮会滑回去
+//
+// 【差异怎么算】。按行的多重集对称差，不是 LCS —— 成员顺序调换算 0。
+// 那是有意的：App 接口那几个文件差的全是 opensInsidePhone() 声明的位置，
+// 调完顺序就能搬，棘轮不该把「只差顺序」记成一笔要还的债。
+// 而「可以直接搬」那一条用的是【严格逐行相等】，不是这个分数。
+abstract class PlatformTwinsTask extends DefaultTask {
+
+    /** 每条 {key, projectJavaDir}，来自 mcphoneAllTargets。 */
+    @Input abstract ListProperty<Object> getTargets()
+
+    /**
+     * 目录【内容】也要当输入。
+     *
+     * 【不能只声明 targets】：那里面装的是 File，Gradle 只把<b>路径</b>当输入 —— 平台源码改一个字节，
+     * 输入哈希一个字都不变，{@code verifyPlatformTwins} 会被判 UP-TO-DATE 直接跳过：本地假绿、CI 才红。
+     * Stage 1 实际踩过（214→242 的漂移就是这么漏掉的）。与 SeamsDocTask.scannedDirs 同一个教训：
+     * <b>没被追踪的输入等于没有的闸</b>。
+     */
+    @InputFiles @PathSensitive(PathSensitivity.RELATIVE)
+    abstract ConfigurableFileCollection getScannedDirs()
+
+    /** 基线文件的内容。用内容而不是 File：File 不是被追踪的配置输入，改了基线不重跑。 */
+    @Input @Optional abstract Property<String> getBaselineJson()
+
+    /** 写基线时用。verify 那个任务不设它。 */
+    @Internal abstract RegularFileProperty getBaselineFile()
+
+    @Input abstract Property<Boolean> getWriteBaseline()
+
+    /** 【stripComments 不是 strip】：孪生比对要看字符串内容，理由见那个方法。 */
+    static List<String> lines(File f) {
+        TargetNeutrality.stripComments(f.getText('UTF-8')).split('\n').collect { it.trim() }.findAll { it }
+    }
+
+    /** 多重集对称差：两边各自「多出来的行」的总条数。 */
+    static int score(List<String> a, List<String> b) {
+        def ca = a.countBy { it }, cb = b.countBy { it }
+        int n = 0
+        (ca.keySet() + cb.keySet()).each { k ->
+            n += Math.abs((ca[k] ?: 0) - (cb[k] ?: 0))
+        }
+        return n
+    }
+
+    /**
+     * 相对路径 -> [目标名: 文件]，只留出现在两个及以上目标里的。
+     *
+     * 【一个目标的源码根不止 platforms/<目标名>/】，还有它挂的每一个层。不把层算进来，
+     * 就会漏掉<b>第三条配对线</b>：layers/version/1.20.5+/ 里的文件与 platforms/1.20.1-forge/
+     * 下的同名文件也是一对拷贝，而且是全仓最大的一批。原先这里只读 projectJavaDir，
+     * 于是那 55 对一道闸都没有 —— layerJavaDirs 早就算好带在数据里了，只是没人读。
+     *
+     * 【与 verifyLoaderTwins 有重叠，是有意的】：加载器层那 6 对同样会出现在这里。
+     * 那道闸管的是「除加载器 import 外必须逐字相同」，这道闸管的是「有几份拷贝、
+     * 差多少行、只许降」。两个问题不一样，重叠没有坏处。
+     */
+    Map<String, Map<String, File>> collect() {
+        def byPath = new TreeMap<String, Map<String, File>>()
+        targets.get().each { t ->
+            def roots = [t.projectJavaDir as File]
+            ((t.layerJavaDirs ?: []) as List).each { roots << (it as File) }
+            roots.each { File root ->
+                if (!root.isDirectory()) return
+                root.eachFileRecurse { f ->
+                    if (!f.isFile() || !f.name.endsWith('.java')) return
+                    def rel = root.toPath().relativize(f.toPath()).toString().replace(File.separator, '/')
+                    byPath.computeIfAbsent(rel, { new TreeMap<String, File>() })[t.key as String] = f
+                }
+            }
+        }
+        // 【同一个文件被两个目标看到，不是"两份拷贝"】。
+        //
+        // 一条 rel 对应两个目标，有两种成因：两个目标各有一份同名的【不同文件】
+        // （这才是要盯的拷贝），或者它们读的是【同一个文件】—— 挂在共享层上的文件
+        // 对每个挂它的目标都是同一个绝对路径。后者本身就是共享，拿它去比"差多少行"
+        // 恒为 0，于是会被判成"一字不差，还没搬进 shared/"——而它已经在共享层里了，
+        // 那句指令无处可搬。
+        //
+        // 这个假阳性在只有一个 1.21.1 目标时显不出来（那时没有第二个目标读同一个层
+        // 文件）；加进第二个同版本目标的第一天就冒出来。所以按【绝对路径去重后还剩几份】
+        // 判，而不是按"有几个目标看见了它"。
+        return byPath.findAll { k, v ->
+            if (v.size() <= 1) return false
+            def distinct = v.values().collect { (it as File).canonicalPath }.unique()
+            return distinct.size() > 1
+        }
+    }
+
+    /** 一对（或一组）的分数：以字典序第一个目标为基准，与其余各家的分数之和。 */
+    static List measure(Map<String, File> copies) {
+        def names = copies.keySet().toList()
+        def base = lines(copies[names[0]])
+        int total = 0
+        boolean allExact = true
+        names.drop(1).each { o ->
+            def other = lines(copies[o])
+            total += score(base, other)
+            if (other != base) allExact = false
+        }
+        return [total, allExact]
+    }
+
+    @TaskAction
+    void run() {
+        def groups = collect()
+        if (groups.isEmpty()) {
+            throw new GradleException(
+                    "一对同名双胞胎都没扫到 —— 扫空清单的闸永远是绿的。\n" +
+                    "多半是 targets.json 里的 project 路径过期了，或者这道闸的枚举方式坏了。")
+        }
+        def now = new TreeMap<String, Integer>()
+        def movable = []
+        groups.each { rel, copies ->
+            def (int total, boolean exact) = measure(copies)
+            now[rel] = total
+            if (exact) movable << "  ${rel}  （${copies.keySet().join('、')}）"
+        }
+
+        if (writeBaseline.get()) {
+            def f = baselineFile.get().asFile
+            f.parentFile.mkdirs()
+            def sb = new StringBuilder("{\n")
+            sb << "  \"_comment\": [\n"
+            sb << "    \"platforms/<目标名>/ 下同名文件的差异基线，由 ./gradlew updateTwinBaseline 生成，别手改。\",\n"
+            sb << "    \"数字是按行的多重集对称差（成员顺序调换算 0）。verifyPlatformTwins 只许它降，不许升。\",\n"
+            sb << "    \"降了也红 —— 那是要求把这份基线跟着调下去，否则棘轮会滑回去。\",\n"
+            sb << "    \"归零的那一对会单独报出来：逐字相同就该搬进 shared/，不该留在这儿。\"\n"
+            sb << "  ],\n"
+            sb << "  \"pairs\": {\n"
+            sb << now.collect { k, v -> "    \"${k}\": ${v}" }.join(',\n')
+            sb << "\n  }\n}\n"
+            f.setText(sb.toString(), 'UTF-8')
+            logger.lifecycle("双胞胎基线已写入 ${f}：${now.size()} 对，差异合计 ${now.values().sum()} 行")
+            return
+        }
+
+        def raw = baselineJson.orNull
+        if (!raw?.trim()) {
+            throw new GradleException(
+                    "读不到 versions/platform-twins.json —— 基线是这道闸的全部判据，读不到就只能静默放行。\n" +
+                    "跑 ./gradlew updateTwinBaseline 生成一份。")
+        }
+        def base = new groovy.json.JsonSlurper().parseText(raw).pairs as Map
+        if (base == null) {
+            throw new GradleException("versions/platform-twins.json 里没有 pairs —— 那份基线坏了。")
+        }
+
+        def worse = [], stale = [], added = [], gone = []
+        now.each { rel, v ->
+            def b = base[rel]
+            if (b == null) { added << "  ${rel}  现在差 ${v} 行" }
+            else if (v > (b as int)) { worse << "  ${rel}  基线 ${b} → 现在 ${v}（+${v - (b as int)}）" }
+            else if (v < (b as int)) { stale << "  ${rel}  基线 ${b} → 现在 ${v}（-${(b as int) - v}）" }
+        }
+        base.each { rel, v -> if (!now.containsKey(rel)) gone << "  ${rel}（基线 ${v}）" }
+
+        def problems = []
+        if (movable) {
+            problems << "【这些对一字不差，还没搬进 shared/】共 ${movable.size()} 对：\n" +
+                    movable.join('\n') + "\n" +
+                    "  两份逐字相同意味着不存在接缝。留在 platforms/ 下，下一次只会有一边被改。"
+        }
+        if (worse) {
+            problems << "【这些对漂开了】共 ${worse.size()} 对：\n" + worse.join('\n') + "\n" +
+                    "  每个目标只编自己那一份，两边都编得过，所以编译器不会说话。\n" +
+                    "  要么把改动同步到每一份，要么这处差异是有意的接缝 —— 那就写清理由，\n" +
+                    "  再跑 ./gradlew updateTwinBaseline 把它记进基线。"
+        }
+        if (added) {
+            problems << "【基线里没有这几对】共 ${added.size()} 对：\n" + added.join('\n') + "\n" +
+                    "  新出现的同名双胞胎。确认它该存在之后跑 ./gradlew updateTwinBaseline。"
+        }
+        if (stale) {
+            problems << "【差异变小了，基线没跟上】共 ${stale.size()} 对：\n" + stale.join('\n') + "\n" +
+                    "  这是好消息，但基线不跟着降的话棘轮会滑回去 —— 明天改回原样不会有人拦。\n" +
+                    "  跑 ./gradlew updateTwinBaseline。"
+        }
+        if (gone) {
+            problems << "【基线里有、现在没有的对】共 ${gone.size()} 对：\n" + gone.join('\n') + "\n" +
+                    "  搬进 shared/ 或删掉了都算正常，跑 ./gradlew updateTwinBaseline 清掉这几行。"
+        }
+        if (problems) {
+            throw new GradleException(
+                    "platforms/ 下的同名双胞胎有 ${problems.size()} 类问题：\n\n" +
+                    problems.join('\n\n') + "\n")
+        }
+        logger.lifecycle("平台双胞胎校验通过：${now.size()} 对，差异合计 ${now.values().sum()} 行（基线内）")
+    }
+}
+
+def twinBaselineFile = new File(repoRoot, 'versions/platform-twins.json')
+
+tasks.register('verifyPlatformTwins', PlatformTwinsTask) {
+    description = '校验 platforms/ 下同名文件的差异不超过基线，且没有逐字相同却没搬走的'
+    group = 'verification'
+    targets.set(mcphoneAllTargets)
+    // 内容输入（约束 3）：不声明的话，平台源码改了这道闸会被判 UP-TO-DATE 跳过（本地假绿、CI 才红）
+    scannedDirs.from(mcphoneAllTargets.collectMany { t ->
+        [t.projectJavaDir] + ((t.layerJavaDirs ?: []) as List)
+    }.findAll { (it as File).isDirectory() })
+    baselineJson.set(providers.fileContents(
+            layout.projectDirectory.file('../../versions/platform-twins.json')).asText)
+    writeBaseline.set(false)
+}
+tasks.named('check').configure { dependsOn tasks.named('verifyPlatformTwins') }
+
+tasks.register('updateTwinBaseline', PlatformTwinsTask) {
+    description = '重算 platforms/ 下同名文件的差异基线'
+    group = 'verification'
+    targets.set(mcphoneAllTargets)
+    scannedDirs.from(mcphoneAllTargets.collectMany { t ->
+        [t.projectJavaDir] + ((t.layerJavaDirs ?: []) as List)
+    }.findAll { (it as File).isDirectory() })
+    baselineFile.set(twinBaselineFile)
+    writeBaseline.set(true)
+}
+
+
+tasks.register('verifyLoaderTwins', LoaderTwinsTask) {
+    description = '校验加载器层里同名的几份除加载器 import 外逐字相同'
+    group = 'verification'
+    loaderLayers.set(mcphoneAllLoaderLayerDirs)
+}
+tasks.named('check').configure { dependsOn tasks.named('verifyLoaderTwins') }
+
+// ============================================================
+//  平台接缝清单
+// ============================================================
+//
+// shared/ 里的代码会引用一批【只定义在 platforms/ 下】的类型。写第二个平台的人
+// 要做的第一件事就是把它们分成两类：
+//
+//   甲  有意的接缝 —— 每个平台各写一份，全限定名与签名相同、方法体各写各的
+//   乙  只是还没搬 —— 不该重新实现，等着搬进 shared/
+//
+// 这张清单原先不存在，树上也看不出来 —— PhoneItemData 被误搬进 shared/ 就是这么来的：
+// 它和 PhonePlayerData 是同一个设计的两半、同一段论证，一个搬了一个没搬，
+// 而没有任何东西能一眼判出它属于哪一类。
+//
+// 分类判据在 TargetNeutrality 里，与 verifySharedIsTargetNeutral 那道闸【共用一份】：
+// 命中任何一条 → 甲，一条都不中 → 乙。所以两处的说法不可能再打架。
+//
+// 【为什么是生成的，不是手写的】
+//
+// 手写的清单会烂。这仓库已经栽过一次：附属接口文档整整一版只写了 IPhoneApp，
+// 别的几套一个字都没有 —— 所以那份文档现在由 docs/AddonApiExamples.java 守着。
+// 同一个办法：清单里那两段由构建现算，对不上就红。人只写旁边的散文。
+//
+//   ./gradlew verifySeamsDocCurrent   对不上就红（挂在 check 上）
+//   ./gradlew updateSeamsDoc          按现状重写那两段
+//
+// 【乙 的意思是"自动判据没找到阻断"，不是"确认可以搬"】。判据看不见签名漂移
+// （方法名没变、签名变了），那一层只有真编一遍才知道。要把一个类型从乙挪进
+// shared/，仍然得人看一眼，并且过 verifySharedIsTargetNeutral 那道闸。
+abstract class SeamsDocTask extends DefaultTask {
+
+    @InputDirectory abstract DirectoryProperty getSharedDir()
+    /**
+     * 全部目标的信息，每条 {key, projectJavaDir, layerJavaDirs}。
+     *
+     * 【一次刷全部，不是各刷各的】：这份清单按目标算、却只有一份文件。原先每个平台
+     * 只重生成自己那一段，于是改任何一个平台的文件都要去跑那个平台的 updateSeamsDoc，
+     * 而有的目标本机根本建不起来，那一段就永远刷不了。这些信息全都能从 JSON 与
+     * 文件系统读出来，跟"当前是哪个平台"无关。
+     */
+    @Input          abstract ListProperty<Object> getAllTargets()
+
+    /**
+     * 上面那份清单里装的是 File，而 Gradle 只把它们的<b>路径</b>当输入 —— 目录里
+     * 多一个文件、少一个文件，输入哈希一个字都不变。
+     *
+     * 【这不是洁癖，是实测踩过】：Terminals 从 platforms/ 挪进 layers/loader/ 之后，
+     * updateSeamsDoc 与 verifySeamsDocCurrent 双双判成 UP-TO-DATE 直接跳过，
+     * 清单里还留着那一行，而 check 全绿 —— 这道闸恰好在它该管的东西变了的那一刻被跳过。
+     *
+     * 复现：让一切都是最新，往 platforms/<目标>/src/main/java 下扔一个新类，
+     * 只跑 verifySeamsDocCurrent，Gradle 报 UP-TO-DATE。
+     *
+     * 所以要再声明一次，这回声明的是内容。与 layers.json 那次的
+     * providers.fileContents 是同一个教训：<b>没被追踪的输入等于没有的闸</b>。
+     */
+    @InputFiles @PathSensitive(PathSensitivity.RELATIVE)
+    abstract ConfigurableFileCollection getScannedDirs()
+
+    @OutputFile     abstract RegularFileProperty getDocFile()
+    /** true 改文档，false 只对比 */
+    @Input          abstract Property<Boolean> getUpdating()
+
+    static final String PREFIX = 'com.november.mcphone.'
+
+
+    static String begin(String k) { "<!-- 下面这段由 ./gradlew updateSeamsDoc 生成，别手改：${k} -->" }
+    static String end(String k)   { "<!-- ${k} 结束 -->" }
+
+    static String fqcnOf(File root, File f) {
+        (root.toPath().relativize(f.toPath()).toString().replace(File.separator, '.')) - ~/\.java$/
+    }
+
+    static List<File> javaFiles(File dir) {
+        def out = []
+        dir.eachFileRecurse { if (it.isFile() && it.name.endsWith('.java')) out << it }
+        return out
+    }
+
+    Map compute(File platRoot, List<File> layerRoots) {
+        File sharedRoot = sharedDir.get().asFile
+
+        def sharedFiles = javaFiles(sharedRoot)
+        if (sharedFiles.isEmpty()) {
+            throw new GradleException("${sharedRoot} 下一个 .java 都没有 —— 扫空目录算出来的清单永远是空的。")
+        }
+        def platFiles = [:]
+        javaFiles(platRoot).each { platFiles[fqcnOf(platRoot, it)] = it }
+        if (platFiles.isEmpty()) {
+            throw new GradleException("${platRoot} 下一个 .java 都没有。")
+        }
+
+        def sharedFqcns = new LinkedHashSet(sharedFiles.collect { fqcnOf(sharedRoot, it) })
+
+        // 【共用代码 = shared/ 加上所有共享层】。原先只收 shared/ 的文件，
+        // 于是 layers/ → platforms/ 那条边整个在视野外：core.net.Wire 被层里两个
+        // 文件 import、却不被 shared/ 引用，甲乙两张单子都不会提到它 ——
+        // 而第二个同版本目标一挂上那层就编不过。
+        def sharedSideFiles = [] as List
+        sharedSideFiles.addAll(sharedFiles.collect { [root: sharedRoot, file: it] })
+        layerRoots.each { root ->
+            if (root.isDirectory()) {
+                javaFiles(root).each {
+                    sharedFqcns << fqcnOf(root, it)
+                    sharedSideFiles << [root: root, file: it]
+                }
+            }
+        }
+
+        // 共用代码引用了哪些本模组的类型：显式 import，加上同包里的（同包不写 import）
+        def referenced = [] as Set
+        def samePkg = [:]
+        platFiles.keySet().each { t ->
+            samePkg.computeIfAbsent(t.replaceAll(/\.[^.]+$/, ''), { [] as List }) << t
+        }
+        sharedSideFiles.each { e ->
+            // 【必须去注释】。同包引用是拿简单名在正文里搜的，不去注释的话
+            // 类注释里提一句某个类名就算"引用"—— ★ 标记因此假阳性，而这张单子
+            // 正是拿来照着补接缝的：假阳性会让人去实现一个根本没人用的类。
+            // import 那一段同理：块注释里注掉的 import 也会被行锚点匹配上。
+            def src = TargetNeutrality.strip(e.file.getText('UTF-8'))
+            def pkg = fqcnOf(e.root, e.file).replaceAll(/\.[^.]+$/, '')
+            def m = src =~ /(?m)^[ \t]*import[ \t]+(?:static[ \t]+)?([\w.]+)[ \t]*;/
+            while (m.find()) {
+                if (m.group(1).startsWith(PREFIX)) referenced << m.group(1)
+            }
+            samePkg.getOrDefault(pkg, []).each { cand ->
+                def simple = cand.replaceAll(/^.*\./, '')
+                if (src =~ /\b${java.util.regex.Pattern.quote(simple)}\b/) referenced << cand
+            }
+        }
+
+        // 【枚举 platforms/ 下的全部，不只是被引用到的】
+        //
+        // 原先只列"被共用代码引用到的"，于是"从没被引用过"的文件从来没进过视野 ——
+        // 那 24 个只被版本轴挡住的网络包就是这么漏的，靠人扫才发现。改成全量之后
+        // 这一类彻底关掉：platforms/ 下的每个文件都必然出现在甲或乙里。
+        def rows = []
+        platFiles.keySet().toSorted().each { t ->
+            if (sharedFqcns.contains(t)) return          // 同名的已经共用了，不算平台专有
+            rows << [t, TargetNeutrality.tagsOf(platFiles[t].getText('UTF-8')), referenced.contains(t)]
+        }
+        return [rows: rows, sharedFqcns: sharedFqcns]
+    }
+
+    /**
+     * 一个目标下 platforms/ 里的全部类型，按「共用代码引不引用它」分两组。
+     *
+     * <h2>为什么是全量，不是只列被引用的</h2>
+     *
+     * 「从没被引用过」的那一类正是最容易脱离视野的 —— 那 24 个只被版本轴挡住的网络包
+     * 就是这么漏的，靠人扫才发现。所以枚举基准是 platforms/ 下的每一个文件。
+     *
+     * <h2>为什么不再分甲/乙</h2>
+     *
+     * 那个二分说的是「这是有意的接缝」还是「只是还没搬」，而做出判断的是那四条判据 ——
+     * 它们看不出来。四个门面（Slots / StackCodecs / CuriosInventories / Draw）判据
+     * 一条都不中，于是全被归进「还没搬」，而它们恰恰是最典型的有意接缝；
+     * 反过来「必须提供」与「不得重新实现」曾经同时挂在同一批条目上。
+     *
+     * 现在只报事实：<b>共用代码引不引用它</b>（编译期可查），以及<b>它命中了哪几条判据</b>
+     * （证据，不是判决）。该抄一份还是该自己写，打开那个文件看，别指望一个标签替你决定。
+     */
+    static String render(List rows) {
+        def star = rows.findAll { it[2] }
+        def rest = rows.findAll { !it[2] }
+        def sb = new StringBuilder()
+        [[star, '共用代码引用了的', '**新平台必须提供同名类型**，否则 shared/ 与共享层编不过。' +
+                '全限定名是硬约束；方法体是抄现成的一份还是自己写，看那个文件'],
+         [rest, '平台内部的', '只在这个平台自己的代码里用到。新平台不必提供同名类型']].each { list, title, hint ->
+            sb << "#### ${title}（${list.size()}）\n\n${hint}。\n\n"
+            if (list.isEmpty()) {
+                sb << "（无）\n\n"
+            } else {
+                list.each {
+                    sb << "- `" << (it[0] - PREFIX) << "`"
+                    if (it[1]) sb << "　—— " << it[1].join('、')
+                    sb << "\n"
+                }
+                sb << "\n"
+            }
+        }
+        return sb.toString().trim() + "\n"
+    }
+
+
+    static String replaceBlock(String doc, String begin, String end, String body, File f) {
+        int i = doc.indexOf(begin), j = doc.indexOf(end)
+        if (i < 0 || j < 0 || j < i) {
+            throw new GradleException(
+                    "${f} 里找不到成对的标记：\n  ${begin}\n  ${end}\n" +
+                    "生成的两段靠这四行定位，删了就没法再对了。把它们加回去，再跑 ./gradlew updateSeamsDoc。")
+        }
+        return doc.substring(0, i + begin.length()) + "\n\n" + body + "\n" + doc.substring(j)
+    }
+
+    @TaskAction
+    void run() {
+        File f = docFile.get().asFile
+        if (!f.exists()) {
+            throw new GradleException(
+                    "找不到 ${f}。这份清单是这套结构的一部分，不是可有可无的说明 —— " +
+                    "没有它，写新平台的人分不出'必须自己写一份'和'不该重新实现'。")
+        }
+        def targets = allTargets.get()
+        if (targets.isEmpty()) {
+            throw new GradleException("一个目标都没算出来 —— 扫空清单的闸永远是绿的。")
+        }
+
+        def doc = f.getText('UTF-8')
+        def wanted = doc
+        def summary = []
+        targets.each { tgt ->
+            String k = tgt.key
+            def r = compute(tgt.projectJavaDir as File, tgt.layerJavaDirs as List<File>)
+
+            wanted = replaceBlock(wanted, begin(k), end(k), render(r.rows), f)
+            summary << "${k} ${r.rows.size()} 个（共用代码引用 ${r.rows.count { it[2] }} 个）"
+        }
+
+        if (updating.get()) {
+            if (doc == wanted) {
+                logger.lifecycle("接缝清单已是最新：${summary.join('，')}")
+            } else {
+                f.setText(wanted, 'UTF-8')
+                logger.lifecycle("接缝清单已重写：${summary.join('，')} → ${f}")
+            }
+            return
+        }
+
+        if (doc != wanted) {
+            throw new GradleException(
+                    "shared/PLATFORM-SEAMS.md 跟源码对不上了。\n" +
+                    "现算出来：${summary.join('，')}\n\n" +
+                    "跑 ./gradlew updateSeamsDoc 重写（它一次刷【全部目标】那几段），然后【看一眼 diff】——\n" +
+                    "  进了「共用代码引用了的」   共用层开始依赖它了，新平台从此必须提供同名类型\n" +
+                    "  出了那一组             共用层不再引用它，新平台可以不提供\n" +
+                    "  新出现                 多了一个平台专有的类型\n" +
+                    "  整个消失   那个类型被删了，或者被搬进了共用层\n" +
+                    "都值得看一眼再提交，不要闭眼重写。")
+        }
+        logger.lifecycle("接缝清单与源码一致：${summary.join('，')}")
+    }
+}
+
+// ============================================================
+//  shared/ 的第三方模组 API 白名单
+// ============================================================
+//
+// 目标中立那四条判据（加载器导入、1.20.5+ 原版、注入的方法、组件读写）
+// 【一条都不覆盖第三方模组的包】。实测代价：AE2 的 appeng.menu.locator 与
+// Refined Storage 的 com.refinedmods.* 躺在 shared/ 里，1.20.1 那个目标一编
+// 就是 30 个错 —— 那两个包在 1.20.1 上根本不存在。
+//
+// 【但不能一刀切禁掉】。Curios 的 top.theillusivec4.curios.api 两个版本上都在，
+// 禁了会把真能共用的联动代码赶出 shared/。「这个第三方 API 跨版本稳不稳定」
+// 是个矩阵问题，只能一条条查过再写下来 —— 表在 versions/third-party-apis.json，
+// 加一条要连证据一起写。
+abstract class ThirdPartyImportsTask extends DefaultTask {
+
+    @InputDirectory abstract DirectoryProperty getSharedDir()
+    @Input abstract ListProperty<String> getAllowedPrefixes()
+
+    /** 本模组与原版、加载器之外的顶层包，就当成第三方。 */
+    static final java.util.regex.Pattern IMPORT =
+            ~/(?m)^[ \t]*import[ \t]+(?:static[ \t]+)?([\w.]+)[ \t]*;/
+    static final List<String> OURS = [
+            'com.november.mcphone.', 'net.minecraft.', 'net.neoforged.',
+            'net.minecraftforge.', 'net.fabricmc.', 'cpw.mods.',
+            'java.', 'javax.', 'org.w3c.', 'org.xml.',   // 这几个是 JDK 自带的，不是第三方
+            'com.mojang.', 'org.jetbrains.', 'org.slf4j',
+            'io.netty.', 'org.joml.', 'it.unimi.dsi.', 'com.google.',
+            'org.apache.', 'org.lwjgl.',
+    ].asImmutable()
+
+    @TaskAction
+    void run() {
+        File dir = sharedDir.get().asFile
+        if (!dir.isDirectory()) {
+            throw new GradleException("找不到 ${dir.canonicalPath} —— 这道闸就成了空转。")
+        }
+        def allowed = allowedPrefixes.get()
+        def offenders = [:]
+        int checked = 0
+        dir.eachFileRecurse { f ->
+            if (!f.isFile() || !f.name.endsWith('.java')) return
+            checked++
+            def code = TargetNeutrality.strip(f.getText('UTF-8'))
+            def m = IMPORT.matcher(code)
+            while (m.find()) {
+                def imp = m.group(1)
+                if (OURS.any { imp.startsWith(it) }) continue
+                if (allowed.any { imp.startsWith(it) }) continue
+                offenders.computeIfAbsent(f, { [] as List }) << imp
+            }
+        }
+        if (offenders) {
+            def sb = new StringBuilder()
+            sb << "shared/ 里 import 了没有声明过的第三方模组包，${offenders.size()} 个文件：\n"
+            offenders.each { f, imps ->
+                sb << "\n  ${dir.toPath().relativize(f.toPath())}\n"
+                imps.toSorted().unique().each { sb << "      ${it}\n" }
+            }
+            sb << "\nshared/ 要求每个目标都编得过。第三方模组的 API 包在不同 Minecraft 版本上\n"
+            sb << "未必存在、未必同名 —— 实测 AE2 的 appeng.menu.locator 与 Refined Storage 的\n"
+            sb << "com.refinedmods.* 在 1.20.1 上都不存在，一编就是 30 个错。\n"
+            sb << "\n两条路：\n"
+            sb << "  * 把这个文件搬回 platforms/<目标名>/，各平台各写一份；\n"
+            sb << "  * 确认那个包在矩阵里【每一个】Minecraft 版本上都存在且签名一致，\n"
+            sb << "    把证据写进 versions/third-party-apis.json 的 allowed 里。\n"
+            sb << "\n查不动就走第一条 —— 放进 shared/ 的代价是老版本编不过，\n"
+            sb << "而那要等那个目标真开始建才发现。\n"
+            throw new GradleException(sb.toString())
+        }
+        logger.lifecycle("shared/ 第三方 API 校验通过：${checked} 个文件，白名单 ${allowed.size()} 条")
+    }
+}
+
+tasks.register('verifySharedThirdPartyImports', ThirdPartyImportsTask) {
+    description = '校验 shared/ 只 import 声明过的第三方模组 API 包'
+    group = 'verification'
+    sharedDir.set(new File(repoRoot, 'shared/src/main/java'))
+    allowedPrefixes.set(mcphoneAllowedThirdParty)
+}
+tasks.named('check').configure { dependsOn tasks.named('verifySharedThirdPartyImports') }
+
+// ============================================================
+//  数据包目录名校验
+// ============================================================
+//
+// 1.21（数据包格式 48）把数据包的目录名从复数改成了单数。放错的后果是静默的：
+// 那条配方 / 进度 / 战利品表只是不存在，构建全绿、jar 照出、游戏也不报错。
+// 资源那半边没有 import 可查，这是唯一能机器判的一条。
+//
+// 【层和平台都要查】。原先只查层，而【新文件默认落在平台】—— 最可能写错的位置
+// 恰好是唯一没被查的位置。往 platforms/<目标>/src/main/resources/data/<ns>/recipes/
+// 放一个配方，1.21.1 上是错的，而当时构建照绿。
+//
+// 单复数由谁决定：层按自己的 since，平台按它自己的 minecraft（都在 JSON 里）。
+abstract class DatapackNamesTask extends DefaultTask {
+
+    @InputDirectory @Optional abstract DirectoryProperty getResourcesDir()
+    /** 1.21 起为 true。 */
+    @Input abstract Property<Boolean> getSingular()
+    @Input abstract Property<String>  getLabel()
+
+    /**
+     * 改名表。【清单不写死在这儿】——它在 versions/datapack-renames.json 里，
+     * Gradle 与 CI 读同一份。作用域（收到哪儿为止、哪些是查过不归、哪些没核实）
+     * 也写在那个文件的 _comment 里。
+     */
+    @Input abstract MapProperty<String, String> getRenames()
+
+    @TaskAction
+    void run() {
+        if (!resourcesDir.isPresent() || !resourcesDir.get().asFile.isDirectory()) {
+            // 【跳过要说清是哪一种】。层那边有 populated 把"本来就空"和"路径写错"
+            // 分开，这里没有对应物，所以由注册方决定：层的资源目录不在是正常的
+            // （populated 管着），平台的 src/main/resources 是 Gradle 的约定路径，
+            // 不在就是不对劲 —— 那一头注册时直接拦，走不到这儿。
+            logger.lifecycle("${label.get()}：没有 resources 目录，没有可校验的文件")
+            return
+        }
+        File root = resourcesDir.get().asFile
+        boolean wantSingular = singular.get()
+        def wrong = []
+        int checked = 0
+        root.eachFileRecurse { f ->
+            if (!f.isFile()) return
+            def rel = root.toPath().relativize(f.toPath()).toString().replace(File.separator, '/')
+            // 只看 data/<命名空间>/ 之后那一段
+            def m = rel =~ /^data\/[^\/]+\/(.+)$/
+            if (!m) return
+            checked++
+            def tail = m[0][1]
+            renames.get().each { plural, singularName ->
+                if (wantSingular && tail.startsWith(plural + '/')) {
+                    wrong << [rel, plural, singularName, '1.21 起该用单数']
+                } else if (!wantSingular && tail.startsWith(singularName + '/')) {
+                    wrong << [rel, singularName, plural, '1.21 之前该用复数']
+                }
+            }
+        }
+        if (wrong) {
+            def sb = new StringBuilder()
+            sb << "${label.get()} 的数据包目录名与它的 Minecraft 版本对不上，共 ${wrong.size()} 处：\n"
+            wrong.each { w -> sb << "\n  ${w[0]}\n      ${w[1]}/ 应为 ${w[2]}/ —— ${w[3]}\n" }
+            sb << "\n1.21（数据包格式 48）把这些目录从复数改成了单数。放错【不会报错】——\n"
+            sb << "那条配方 / 进度 / 战利品表只是静默地不存在，构建和游戏都不会说话。\n"
+            throw new GradleException(sb.toString())
+        }
+        logger.lifecycle("${label.get()} 数据包目录名校验通过：${checked} 个文件，" +
+                "按 ${wantSingular ? '1.21 起的单数' : '1.21 之前的复数'} 命名")
+    }
+}
+
+// 平台自己的 resources —— 新文件默认落这儿，最需要查
+tasks.register('verifyPlatformDatapackNames', DatapackNamesTask) {
+    description = '校验平台 resources 里的数据包目录名与目标的 Minecraft 版本相符'
+    group = 'verification'
+    // 【区分"真的没有"和"路径假设破了"】
+    //
+    // 层那边有 populated 把这两种分开，平台这边没有对应物。但不必再发明一个声明：
+    // 问 Gradle 就行 —— 约定路径必须仍在这个源码集的 srcDirs 里。
+    //
+    //   在 srcDirs 里、磁盘上没有  → 这个平台确实没有自己的资源（本仓就是这样，
+    //                              资源全在 shared/ 与层里），跳过是对的
+    //   不在 srcDirs 里            → 约定被改了，这道闸会安静地跳过 —— 必须红
+    //
+    // 判据是源码集本身，不是我们对路径的猜测，所以改了约定当场就知道。
+    def d = file('src/main/resources')
+    if (!sourceSets.main.resources.srcDirs.contains(d)) {
+        throw new GradleException(
+                "${d} 不在 sourceSets.main.resources 的 srcDirs 里。\n" +
+                "平台资源的约定路径变了，而数据包目录名那道闸盯的还是老路径 —— " +
+                "它会安静地跳过。把这里的路径改成新的。\n" +
+                "现有的 srcDirs：${sourceSets.main.resources.srcDirs.join(', ')}")
+    }
+    if (d.isDirectory()) resourcesDir.set(d)
+    singular.set(mcphoneTargetDatapackSingular)
+    renames.set(mcphoneDatapackRenames)
+    label.set("平台 ${mcphoneTarget.key}")
+}
+tasks.named('check').configure { dependsOn tasks.named('verifyPlatformDatapackNames') }
+
+// 每个层一道
+mcphoneLayers.each { layer ->
+    def n = 'verifyDatapackNames' + layer.name.replaceAll(/[^A-Za-z0-9]/, '_')
+    tasks.register(n, DatapackNamesTask) {
+        description = "校验共享层 ${layer.name} 的数据包目录名"
+        group = 'verification'
+        if (layer.resourcesDir.isDirectory()) resourcesDir.set(layer.resourcesDir)
+        singular.set(layer.datapackSingular)
+        renames.set(mcphoneDatapackRenames)
+        label.set("共享层 ${layer.name}")
+    }
+    tasks.named('check').configure { dependsOn tasks.named(n) }
+}
+
+def seamsDoc = new File(repoRoot, 'shared/PLATFORM-SEAMS.md')
+
+tasks.register('verifySeamsDocCurrent', SeamsDocTask) {
+    description = '校验 shared/PLATFORM-SEAMS.md 跟源码对得上'
+    group = 'verification'
+    sharedDir.set(new File(repoRoot, 'shared/src/main/java'))
+    allTargets.set(mcphoneAllTargets)
+    // 目录【内容】也要当输入，理由见 SeamsDocTask.scannedDirs
+    scannedDirs.from(mcphoneAllTargets.collectMany { t ->
+        [t.projectJavaDir] + ((t.layerJavaDirs ?: []) as List)
+    }.findAll { (it as File).isDirectory() })
+    docFile.set(seamsDoc)
+    updating.set(false)
+}
+
+tasks.register('updateSeamsDoc', SeamsDocTask) {
+    description = '按现状重写 shared/PLATFORM-SEAMS.md 里生成的那两段'
+    group = 'documentation'
+    sharedDir.set(new File(repoRoot, 'shared/src/main/java'))
+    allTargets.set(mcphoneAllTargets)
+    // 目录【内容】也要当输入，理由见 SeamsDocTask.scannedDirs
+    scannedDirs.from(mcphoneAllTargets.collectMany { t ->
+        [t.projectJavaDir] + ((t.layerJavaDirs ?: []) as List)
+    }.findAll { (it as File).isDirectory() })
+    docFile.set(seamsDoc)
+    updating.set(true)
+}
+
+tasks.named('check').configure { dependsOn tasks.named('verifySeamsDocCurrent') }
+
+// Mixin 专用包属于加载边界，打包前按实际资源和字节码校验。
+apply from: "${projectDir}/../../gradle/mcphone-mixin-checks.gradle"

@@ -1,0 +1,164 @@
+MCphone 打包了以下第三方库和图标资源。它们各自的许可证如下。
+
+Third-party libraries and icon assets bundled in MCphone, with their licenses.
+
+================================================================
+JavaMP3
+================================================================
+
+用途     MP3 / MP2 / MP1 解码（音乐 App 播放本地 mp3 文件）
+Used for decoding MP3/MP2/MP1 in the Music app.
+
+坐标     fr.delthas:javamp3:1.0.1
+主页     https://github.com/delthas/JavaMP3
+位置     META-INF/jars/javamp3-1.0.1.jar（Fabric）
+         META-INF/jarjar/javamp3-1.0.1.jar（NeoForge / Forge）
+
+MIT License
+
+Copyright (c) 2017 delthas
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================
+FlatLaf
+================================================================
+
+用途     文件选择器（壁纸「选择图片」）的界面外观。
+         不装它也能用，只是对话框退回 Swing 默认的灰色 Metal 风格。
+Used for the look and feel of the file chooser (Wallpaper -> Pick image).
+Without it the dialog still works, it just falls back to Swing's Metal look.
+
+坐标     com.formdev:flatlaf:3.7.2
+主页     https://github.com/JFormDesigner/FlatLaf
+位置     META-INF/jars/flatlaf-3.7.2.jar（只有 Fabric 目标打包它；
+         另外两个目标的选择器用系统外观，见下方说明）
+
+Apache License, Version 2.0
+
+Copyright 2024 FormDev Software GmbH
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+本模组未修改 FlatLaf 的任何代码，只以未修改的二进制形式打包并调用它的公开 API
+（{@code UIManager.setLookAndFeel(new FlatLightLaf())}）。
+The library is bundled unmodified and used only through its public API.
+
+
+================================================================
+Pixelarticons - battery-full / cellular-signal-3 / chat UI
+================================================================
+
+用途     状态栏固定满电电池、满格信号，以及聊天、联系人、发现、个人页、搜索图标（纯白透明 PNG）
+Used for the status bar and chat UI icons (white transparent PNGs).
+
+主页     https://github.com/halfmage/pixelarticons
+原图     https://pixelarticons.com/svg/battery-full.svg
+         https://pixelarticons.com/svg/cellular-signal-3.svg
+位置     assets/mcphone/textures/phone/battery_full.png
+         assets/mcphone/textures/phone/signal_full.png
+         assets/mcphone/textures/chat/ui/{message,contact,compass,user,search}.png
+原稿     聊天图标原始 SVG 位于 docs/assets/chat-ui/，来源为 Pixelarticons 同名图标。
+转换     用户提供的 24x24 纯白透明 PNG，在本模组中原样打包。
+         User-provided 24x24 white transparent PNGs, bundled without further changes.
+
+MIT License
+
+Copyright (c) 2019 Gerrit Halfmann
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+================================================================
+Material Symbols / Iconoir - 聊天操作图标
+================================================================
+用途     返回、更多、圆圈加号、笑脸（Material Symbols），圆圈声波（Iconoir）。
+位置     assets/mcphone/textures/chat/ui/{back,more,smile,voice}.png
+         assets/mcphone/textures/chat/attach.png
+来源     https://github.com/google/material-design-icons
+         https://github.com/iconoir-icons/iconoir
+原稿     docs/assets/chat-ui/material-96px/，具体图标来源见 sources.txt。
+转换     用户提供的 96x96 纯白透明 PNG 原样打包；SVG 仅改颜色及输出尺寸，路径未改。
+授权     Material Symbols: Apache-2.0，完整许可见 licenses/material-symbols-Apache-2.0.txt。
+         Iconoir: MIT，完整许可见 licenses/iconoir-MIT.txt。
+
+
+================================================================
+Material Symbols / Lucide - 复制、删除、粘贴菜单图标
+================================================================
+用途     消息复制/删除和输入框粘贴。用户提供的白色 96x96 PNG 原样打包。
+位置     assets/mcphone/textures/chat/ui/{copy,delete,paste}.png
+原稿     docs/assets/chat-ui/clipboard-actions-96px/，来源记录见 sources.txt。
+来源     Material Symbols content-copy-outline / delete-outline:
+         https://github.com/google/material-design-icons
+         Lucide clipboard-paste: https://lucide.dev/icons/clipboard-paste
+授权     Material Symbols: Apache-2.0，见 licenses/material-symbols-Apache-2.0.txt。
+         Lucide: ISC，完整许可见 licenses/lucide-ISC.txt。
+
+
+================================================================
+Material Symbols / Simple Icons / Heroicons - 「我」菜单图标
+================================================================
+用途     收藏书签、GitHub、赞助心形、设置六齿齿轮（用户选择 D 款）。
+位置     assets/mcphone/textures/chat/ui/{favorite,github,sponsor,settings}.png
+原稿     docs/assets/chat-ui/menu-actions-96px/，用户提供 PNG 原样打包。
+绘制     白色透明图随主题文字着色；按原图可见轮廓对齐，不裁剪或改写源图。
+来源     https://github.com/google/material-design-icons
+         https://github.com/simple-icons/simple-icons
+         https://github.com/tailwindlabs/heroicons
+授权     收藏、赞助：Apache-2.0，见 licenses/material-symbols-Apache-2.0.txt。
+         GitHub：CC0，见 licenses/simple-icons-CC0.txt。
+         设置：MIT，Copyright (c) Tailwind Labs, Inc.，见 licenses/heroicons-MIT.txt。
+
+
+================================================================
+Lucide - 圆环左引号引用图标
+================================================================
+用途     美西螈消息菜单“引用”。位置 assets/mcphone/textures/chat/ui/reply.png。
+来源     https://github.com/lucide-icons/lucide/tree/0.468.0/icons
+         circle.svg 与 quote.svg，原稿保存在 docs/assets/chat-ui/reply/。
+调整     圆环保留原样；引号绕中心旋转 180 度、缩放为 0.6，改为实心。
+         原始 path 坐标不变；组合后转为 96×96 白色透明 PNG，随主题着色。
+授权     ISC；保留 Feather 部分 MIT 声明，完整许可见 licenses/lucide-reply-ISC.txt。

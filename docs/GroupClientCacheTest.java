@@ -1,0 +1,127 @@
+package com.november.mcphone.feature.chat.group.net;
+
+import com.november.mcphone.feature.chat.*;
+import com.november.mcphone.feature.chat.group.*;
+import java.util.*;
+
+/** 真实群快照：历史/推送交错、个人删除、换会话票据、退出群和断线隔离。 */
+public final class GroupClientCacheTest {
+    private static int checks;
+    private static final UUID A = new UUID(0, 1), B = new UUID(0, 2), G = new UUID(1, 1), H = new UUID(1, 2);
+    private static void check(boolean ok, String message) { checks++; if (!ok) throw new AssertionError(message); }
+    private static GroupInfo info(UUID id) { return new GroupInfo(id, "测试群", A, List.of(new GroupMember(A, "A"), new GroupMember(B, "B"))); }
+    private static GroupMessage entry(long seq) { return new GroupMessage(seq, "B", new ChatMessage(new UUID(8, seq), B, 1000, new TextBody("消息" + seq))); }
+    private static GroupSummary summary(UUID id, GroupMessage last) { return new GroupSummary(id, "测试群", A, 2, List.of(A, B), Optional.ofNullable(last), last == null ? 0 : 1); }
+    public static void main(String[] args) {
+        GroupClientCache.clear(); var ticket = GroupClientCache.activate(G); var one = entry(1); var two = entry(2); var three = entry(3);
+        check(ticket != null && GroupClientCache.pendingHistory().equals(ticket), "HUD 恢复绘制可重新绑定当前群");
+        check(GroupClientCache.activate(G) == null && GroupClientCache.pendingHistory().equals(ticket), "同群连续帧不清缓存、不重发请求");
+        GroupClientCache.accept(new GroupReply.Result(ticket, G, GroupStatus.BUSY));
+        check(GroupClientCache.pendingHistory().equals(ticket) && GroupClientCache.consumeHistoryError() == GroupStatus.BUSY, "历史限流保留重试票据并交出明确错误");
+        check(GroupClientCache.consumeHistoryError() == null, "历史错误只提示一次");
+        int[] notices = {0}; GroupClientCache.setMessageListener(v -> notices[0]++);
+        GroupClientCache.accept(new GroupReply.Message(UUID.randomUUID(), 3, summary(G, two)));
+        GroupClientCache.accept(new GroupReply.History(ticket, G, 2, 1, info(G), List.of(one)));
+        check(GroupClientCache.entries().equals(List.of(one, two)), "后到的历史不能覆盖已推送的新消息");
+        check(GroupClientCache.pendingHistory() == null, "历史成功停止重试");
+        check(GroupClientCache.messages().get(1).equals(two.message()) && GroupClientCache.senderName(two.message()).equals("B"), "正文投影与昵称快照一致");
+        var snapshot = GroupClientCache.messages();
+        GroupClientCache.accept(new GroupReply.Message(UUID.randomUUID(), 4, summary(G, three)));
+        check(snapshot.size() == 2 && GroupClientCache.messages().size() == 3, "新消息不能修改旧渲染快照");
+        GroupClientCache.accept(new GroupReply.Message(UUID.randomUUID(), 4, summary(G, three)));
+        check(GroupClientCache.messages().size() == 3 && notices[0] == 3, "重复回声不插入重复消息，仍交给上传确认");
+        var deletion = UUID.randomUUID(); GroupClientCache.beginDeletion(G, two.message().id(), deletion);
+        GroupClientCache.accept(new GroupReply.Deleted(UUID.randomUUID(), G, two.message().id(), ChatDeletionResult.OK, 5, List.of(one, three)));
+        check(GroupClientCache.messages().size() == 3 && GroupClientCache.consumeDeleteResult() == null, "旧删除票据不能应用");
+        GroupClientCache.accept(new GroupReply.Deleted(deletion, H, two.message().id(), ChatDeletionResult.OK, 5, List.of(one, three)));
+        check(GroupClientCache.messages().size() == 3, "别的群删除结果不能应用");
+        GroupClientCache.accept(new GroupReply.Deleted(deletion, G, two.message().id(), ChatDeletionResult.FORBIDDEN, 0, List.of()));
+        check(GroupClientCache.messages().size() == 3 && GroupClientCache.consumeDeleteResult() == ChatDeletionResult.FORBIDDEN, "拒绝不抹掉消息快照");
+        deletion = UUID.randomUUID(); GroupClientCache.beginDeletion(G, two.message().id(), deletion);
+        GroupClientCache.accept(new GroupReply.Deleted(deletion, G, two.message().id(), ChatDeletionResult.OK, 5, List.of(one, three)));
+        check(GroupClientCache.messages().equals(List.of(one.message(), three.message())) && GroupClientCache.consumeDeleteResult() == ChatDeletionResult.OK, "成功删除仅应用本人服务器快照");
+        GroupClientCache.accept(new GroupReply.History(ticket, G, 3, 2, info(G), List.of(one, two)));
+        GroupClientCache.accept(new GroupReply.Message(UUID.randomUUID(), 3, summary(G, two)));
+        check(GroupClientCache.messages().equals(List.of(one.message(), three.message())), "旧历史与旧推送不能复活删除内容");
+        var four = entry(4); GroupClientCache.accept(new GroupReply.Message(UUID.randomUUID(), 6, summary(G, four)));
+        var pending = UUID.randomUUID(); GroupClientCache.beginDeletion(G, three.message().id(), pending);
+        GroupClientCache.accept(new GroupReply.Deleted(pending, G, three.message().id(), ChatDeletionResult.OK, 6, List.of(one)));
+        check(GroupClientCache.messages().equals(List.of(one.message(), four.message())), "删除快照之后先到的推送仍保留");
+        var old = GroupClientCache.open(G); var current = GroupClientCache.open(H);
+        GroupClientCache.accept(new GroupReply.History(old, G, 7, 4, info(G), List.of(one, four)));
+        check(GroupClientCache.messages().isEmpty(), "切群后丢弃旧群历史");
+        GroupClientCache.accept(new GroupReply.History(current, H, 2, 1, info(H), List.of(one)));
+        check(GroupClientCache.messages().equals(List.of(one.message())), "新群正确接收历史");
+        var detail = UUID.randomUUID(); GroupClientCache.requestDetails(H, detail);
+        GroupClientCache.accept(new GroupReply.Details(UUID.randomUUID(), info(G)));
+        check(GroupClientCache.info() == null, "成员详情按请求隔离");
+        GroupClientCache.accept(new GroupReply.Result(detail, H, GroupStatus.BUSY));
+        check(GroupClientCache.detailsError() == GroupStatus.BUSY, "成员详情错误有明确状态");
+        GroupClientCache.accept(new GroupReply.Details(detail, 2, info(H)));
+        check(GroupClientCache.info().id().equals(H), "对应成员详情进入缓存");
+        check(GroupClientCache.detailsError() == null, "详情成功清除旧错误");
+        var op = UUID.randomUUID(); GroupClientCache.track(op); GroupClientCache.cancel(op);
+        GroupClientCache.accept(new GroupReply.Result(op, H, GroupStatus.OK));
+        check(GroupClientCache.consume(op) == null, "离开页面的迟到结果不触发导航");
+        GroupClientCache.track(op); GroupClientCache.accept(new GroupReply.Result(op, H, GroupStatus.OK));
+        check(GroupClientCache.consume(op).status() == GroupStatus.OK && GroupClientCache.consume(op) == null, "操作结果仅消费一次");
+        var submission=UUID.randomUUID();GroupClientCache.track(submission);
+        GroupClientCache.accept(new GroupReply.Message(UUID.randomUUID(),7,summary(H,one)));
+        check(GroupClientCache.consume(submission)==null,"另一请求的消息不能确认本次引用");
+        GroupClientCache.accept(new GroupReply.Message(submission,7,summary(H,one)));
+        var confirmation=GroupClientCache.consume(submission);
+        check(confirmation!=null&&confirmation.status()==GroupStatus.OK&&confirmation.group().equals(H),"自己的消息推送携带票据确认");
+        check(GroupClientCache.consume(submission)==null,"消息确认只消费一次");
+        GroupClientCache.track(submission);GroupClientCache.accept(new GroupReply.Result(submission,H,GroupStatus.OK));
+        check(GroupClientCache.consume(submission).status()==GroupStatus.OK,"去重后的重试可以仅用结果确认，无需再广播消息");
+        GroupClientCache.track(submission);GroupClientCache.cancel(submission);
+        GroupClientCache.accept(new GroupReply.Message(submission,7,summary(H,one)));
+        check(GroupClientCache.consume(submission)==null,"关闭提交后迟到推送不能复活票据");
+        GroupClientCache.accept(new GroupReply.Directory(List.of(summary(H, one))));
+        GroupClientCache.accept(new GroupReply.Directory(List.of()));
+        check(GroupClientCache.removed() && GroupClientCache.messages().isEmpty(), "离群/解散摘要移除当前会话内容");
+        check(!GroupClientCache.removed(G) && GroupClientCache.removed(H), "别的设备的离群状态不能关闭当前不同群");
+        var newTicket = GroupClientCache.open(G);
+        GroupClientCache.accept(new GroupReply.Result(newTicket, G, GroupStatus.NOT_MEMBER));
+        check(GroupClientCache.removed(), "续开无权访问的群正确终止");
+        GroupClientCache.clear();
+        check(GroupClientCache.groups().isEmpty() && GroupClientCache.messages().isEmpty() && GroupClientCache.info() == null, "断线清理群全部快照");
+        GroupClientCache.setMessageListener(v -> {});
+        var metadataHistory = GroupClientCache.open(G); var metadataTicket = UUID.randomUUID();
+        GroupClientCache.requestDetails(G, metadataTicket);
+        var renamed = new GroupInfo(G, "新群名", A, info(G).members());
+        GroupClientCache.accept(new GroupReply.Updated(9, renamed));
+        check(GroupClientCache.info().name().equals("新群名") && GroupClientCache.pendingHistory().equals(metadataHistory), "资料推送立即更新名字，不清空消息历史票据");
+        GroupClientCache.accept(new GroupReply.Details(metadataTicket, 8, info(G)));
+        check(GroupClientCache.info().name().equals("新群名"), "旧成员详情不能覆盖先到的改名推送");
+        GroupClientCache.accept(new GroupReply.History(metadataHistory, G, 7, 1, info(G), List.of(one)));
+        check(GroupClientCache.info().name().equals("新群名") && GroupClientCache.messages().size() == 1, "较旧历史仍接入消息，但不能覆盖新群资料");
+        GroupClientCache.accept(new GroupReply.Updated(99, info(H)));
+        check(GroupClientCache.info().id().equals(G), "其他群资料推送不能污染当前详情");
+        GroupClientCache.close(); GroupClientCache.accept(new GroupReply.Updated(10, renamed));
+        check(GroupClientCache.info() == null, "页面关闭后迟到资料不会复活旧界面");
+        GroupClientCache.open(G); GroupClientCache.requestDetails(H, UUID.randomUUID());
+        GroupClientCache.accept(new GroupReply.Updated(999, renamed));
+        check(GroupClientCache.info() == null, "另一设备活跃会话的资料不能覆盖当前不同群详情");
+        GroupClientCache.accept(new GroupReply.Updated(1, info(H)));
+        check(GroupClientCache.info().id().equals(H), "每群资料版本独立，旧群的大版本号不阻止新群资料");
+        GroupClientCache.clear();
+        var noticeTicket = UUID.randomUUID(); GroupClientCache.requestNotices(noticeTicket);
+        GroupClientCache.accept(new GroupReply.Result(UUID.randomUUID(), null, GroupStatus.UNAVAILABLE));
+        check(GroupClientCache.noticesError() == null && !GroupClientCache.noticesLoaded(), "其他请求错误不能污染邀请收件箱");
+        GroupClientCache.accept(new GroupReply.Result(noticeTicket, null, GroupStatus.UNAVAILABLE));
+        check(GroupClientCache.noticesError() == GroupStatus.UNAVAILABLE, "邀请收件箱读取失败有明确状态");
+        var invitation = new GroupInviteNotice(new UUID(3, 1), G, "待加入群", new GroupMember(A, "A"), 1, 2);
+        GroupClientCache.accept(new GroupReply.Notices(List.of(invitation)));
+        check(GroupClientCache.noticesLoaded() && GroupClientCache.noticesError() == null && GroupClientCache.invitations().equals(List.of(invitation)), "成功通知快照清除读取错误");
+        check(GroupClientCache.groups().isEmpty() && GroupClientCache.messages().isEmpty() && GroupClientCache.info() == null, "收到邀请不能赋予客户端成员、消息或详情");
+        GroupClientCache.close(); check(GroupClientCache.invitations().size() == 1, "关闭会话不丢邀请收件箱");
+        GroupClientCache.clear(); check(GroupClientCache.invitations().isEmpty() && !GroupClientCache.noticesLoaded(), "切服清除邀请与加载状态");
+        var pendingIds=java.util.stream.IntStream.range(0,GroupClientPolicy.MAX_PENDING_OPERATIONS).mapToObj(i->new UUID(10,i)).toList();
+        pendingIds.forEach(GroupClientCache::track);GroupClientCache.track(pendingIds.get(pendingIds.size()-1));
+        GroupClientCache.accept(new GroupReply.Result(pendingIds.get(0),G,GroupStatus.OK));
+        check(GroupClientCache.consume(pendingIds.get(0))!=null,"满容量时重试已有票据不能逐出另一请求");
+        GroupClientCache.clear();
+        System.out.println("全部通过：" + checks + " 条断言");
+    }
+}

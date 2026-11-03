@@ -1,0 +1,115 @@
+import groovy.json.JsonOutput
+
+/** 发布说明是唯一来源；只打包带双语章节的新日志，已冻结的旧版本不补录。 */
+abstract class GeneratePhoneChangelog extends DefaultTask {
+    @InputDirectory abstract DirectoryProperty getNotesDirectory()
+    @Input abstract Property<String> getModVersion()
+    @OutputDirectory abstract DirectoryProperty getOutputDirectory()
+
+    static Map parse(String text, String version) {
+        def languages = [:]
+        String language = null
+        def section = null
+        String date = ''
+        text.eachLine { raw ->
+            String line = raw.trim()
+            def dateMatch = line =~ /^<!-- date: (\d{4}-\d{2}-\d{2}) -->$/
+            if (dateMatch.matches()) date = dateMatch[0][1]
+            if (line == '## 简体中文' || line == '## English') {
+                language = line == '## 简体中文' ? 'zh_cn' : 'en_us'
+                if (languages.containsKey(language)) throw new GradleException("${version}: 重复语言章节")
+                languages[language] = []
+                section = null
+            } else if (language != null && line.startsWith('### ')) {
+                section = [title: line.substring(4), entries: []]
+                languages[language] << section
+            } else if (language != null && line.startsWith('- ')) {
+                if (section == null) throw new GradleException("${version}: 条目必须属于 ### 分类")
+                section.entries << line.substring(2)
+            } else if (language != null && !line.isEmpty() && !line.startsWith('<!--')) {
+                throw new GradleException("${version}: 不支持的日志格式：${line}；请使用分类和单行条目")
+            }
+        }
+        if (languages.isEmpty()) return null // 功能加入之前的冻结日志。
+        if (languages.keySet() != (['zh_cn', 'en_us'] as Set) || languages.values().any {
+            it.isEmpty() || it.any { s -> s.title.isBlank() || s.entries.isEmpty() }
+        }) throw new GradleException("${version}: 更新日志必须包含完整的简体中文和 English 分类条目")
+        [version: version, date: date, languages: languages]
+    }
+
+    static List collect(File directory, String version) {
+        def releases = []
+        String base = version.split('-', 2)[0]
+        directory.eachFileMatch(~/v\d+\.\d+\.\d+\.md/) { f ->
+            def entry = parse(f.getText('UTF-8'), f.name.substring(1, f.name.length() - 3))
+            if (entry != null) releases << entry
+        }
+        // 仅构建时排序；游戏中只做当前版本的精确匹配。
+        releases.sort { a, b ->
+            def x = a.version.tokenize('.')*.toInteger(), y = b.version.tokenize('.')*.toInteger()
+            (y[0] <=> x[0]) ?: (y[1] <=> x[1]) ?: (y[2] <=> x[2])
+        }
+        def next = new File(directory, 'next.md')
+        if (next.exists()) {
+            def entry = parse(next.getText('UTF-8'), 'next')
+            if (entry == null) throw new GradleException('next.md 缺少双语更新日志章节')
+            releases.add(0, entry)
+        } else if (!releases.any { it.version == base }) {
+            throw new GradleException("缺少当前版本 ${base} 的双语更新日志")
+        }
+        releases
+    }
+
+    @TaskAction void generate() {
+        def releases = collect(notesDirectory.get().asFile, modVersion.get())
+        File output = new File(outputDirectory.get().asFile, 'assets/mcphone/changelog.json')
+        output.parentFile.mkdirs()
+        output.setText(JsonOutput.prettyPrint(JsonOutput.toJson(releases)) + '\n', 'UTF-8')
+    }
+}
+
+def generatePhoneChangelog = tasks.register('generatePhoneChangelog', GeneratePhoneChangelog) {
+    notesDirectory = layout.projectDirectory.dir('../../docs/release-notes')
+    modVersion = project.version.toString()
+    outputDirectory = layout.buildDirectory.dir('generated/phone-changelog')
+}
+sourceSets.main.resources.srcDir(generatePhoneChangelog)
+
+tasks.register('verifyPhoneChangelogFormat') {
+    group = 'verification'
+    doLast {
+        def fixture = '## 简体中文\n### 新增\n- 中文 [链接](https://example.com)\n## English\n### Added\n- English [link](https://example.com)\n'
+        def parsed = GeneratePhoneChangelog.parse('<!-- date: 2026-10-23 -->\n' + fixture, '2.0.0')
+        assert parsed.date == '2026-10-23'
+        assert parsed.languages.zh_cn[0].entries[0].contains('[链接]')
+        assert parsed.languages.en_us[0].title == 'Added'
+        assert GeneratePhoneChangelog.parse('# 冻结旧版\n- old', '1.0.0') == null
+        ['## 简体中文\n### 新增\n- only Chinese', fixture + 'unparsed content', fixture.replace('### Added\n', '')].each { invalid ->
+            boolean rejected = false
+            try { GeneratePhoneChangelog.parse(invalid, '2.0.0') } catch (GradleException expected) { rejected = true }
+            assert rejected: '损坏或缺翻译的发布说明不得静默漏打包'
+        }
+        File notes = new File(temporaryDir, 'notes')
+        notes.mkdirs()
+        def next = new File(notes, 'next.md')
+        def current = new File(notes, 'v2.0.0.md')
+        // 上次失败留下的夹具只覆盖指定文件，不清理任何仓库源文件。
+        java.nio.file.Files.deleteIfExists(current.toPath())
+        new File(notes, 'v1.0.0.md').setText('# Frozen legacy\n- old', 'UTF-8')
+        new File(notes, 'v1.9.0.md').setText(fixture, 'UTF-8')
+        next.setText(fixture, 'UTF-8')
+        assert GeneratePhoneChangelog.collect(notes, '1.0.0')*.version == ['next', '1.9.0']
+        java.nio.file.Files.move(next.toPath(), current.toPath()) // 与既有发版重命名一致。
+        assert GeneratePhoneChangelog.collect(notes, '2.0.0')*.version == ['2.0.0', '1.9.0']
+        assert GeneratePhoneChangelog.collect(notes, '2.0.0-beta.1')*.version == ['2.0.0', '1.9.0']
+        boolean missingRejected = false
+        try { GeneratePhoneChangelog.collect(notes, '3.0.0') } catch (GradleException expected) { missingRejected = true }
+        assert missingRejected: '当前发布版本没有日志时必须失败'
+        next.setText('# Missing translations', 'UTF-8')
+        boolean nextRejected = false
+        try { GeneratePhoneChangelog.collect(notes, '2.0.0') } catch (GradleException expected) { nextRejected = true }
+        assert nextRejected: '待发布日志缺少双语时必须失败'
+        logger.lifecycle('更新日志格式检查通过：双语、日期、链接、冻结旧版、发版重命名、历史排序及缺失日志')
+    }
+}
+tasks.named('check').configure { dependsOn 'verifyPhoneChangelogFormat' }
