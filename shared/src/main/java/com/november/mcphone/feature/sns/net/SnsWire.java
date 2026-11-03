@@ -27,7 +27,7 @@ public final class SnsWire {
     public static final int PAGE_SIZE = 8;
     public static final int MAX_COMMENTS_SENT = 60;
 
-    public enum Kind { FEED, DETAIL, POST, LIKE, COMMENT, DELETE_POST, DELETE_COMMENT, REPORT, BLOCK, UNBLOCK, MINE }
+    public enum Kind { FEED, DETAIL, POST, LIKE, COMMENT, DELETE_POST, DELETE_COMMENT, REPORT, BLOCK, UNBLOCK, MINE, BLOCKS }
 
     public enum Status {
         OK, PENDING, FORBIDDEN, INVALID, BUSY, TOO_FAST, PROFANITY, DUPLICATE, GONE, MUTED, NO_IMAGE, UNAVAILABLE;

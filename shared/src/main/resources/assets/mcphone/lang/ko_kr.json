@@ -2,7 +2,7 @@
   "mcphone.chat.layout.search": "검색",
   "mcphone.chat.layout.chats": "채팅",
   "mcphone.chat.layout.contacts": "친구",
-  "mcphone.chat.layout.discover": "둘러보기",
+  "mcphone.chat.layout.discover": "SNS",
   "mcphone.chat.layout.profile": "나",
   "mcphone.chat.layout.voice": "음성 (준비 중)",
   "mcphone.chat.layout.file": "파일 (준비 중)",
@@ -386,7 +386,7 @@
   "mcphone.chat.favorite.exported": "앨범에 저장했어요",
   "mcphone.chat.favorite.exported_frame": "움짤의 첫 장면을 앨범에 저장했어요",
   "mcphone.chat.camera_only": "포키폰 카메라로 찍은 사진만 보낼 수 있어요",
-  "mcphone.sns.title": "둘러보기",
+  "mcphone.sns.title": "SNS",
   "mcphone.sns.detail": "게시물",
   "mcphone.sns.compose": "새 글",
   "mcphone.sns.tab.all": "전체",
@@ -418,7 +418,7 @@
   "mcphone.sns.posted": "올렸어!",
   "mcphone.sns.deleted": "삭제했어.",
   "mcphone.sns.reported": "신고했어. 운영진이 확인할게.",
-  "mcphone.sns.blocked": "차단했어. 이제 그 사람 글이 안 보여.",
+  "mcphone.sns.blocked": "차단했어. 「내 글 → 차단 목록」에서 풀 수 있어.",
   "mcphone.sns.gone": "지워진 글이야.",
   "mcphone.sns.timeout": "응답이 없어. 잠시 뒤 다시 해 봐.",
   "mcphone.sns.unavailable": "지금은 쓸 수 없어.",
@@ -438,5 +438,9 @@
   "mcphone.sns.status.gone": "지워진 글이야.",
   "mcphone.sns.status.muted": "운영진이 SNS 사용을 막아 뒀어.",
   "mcphone.sns.status.no_image": "사진을 못 올렸어. 다시 해 봐.",
-  "mcphone.sns.status.unavailable": "지금은 쓸 수 없어."
+  "mcphone.sns.status.unavailable": "지금은 쓸 수 없어.",
+  "mcphone.sns.blocks": "차단 목록",
+  "mcphone.sns.unblock": "해제",
+  "mcphone.sns.unblocked": "차단 풀었어. 다시 글이 보여.",
+  "mcphone.sns.no_blocks": "차단한 사람이 없어."
 }

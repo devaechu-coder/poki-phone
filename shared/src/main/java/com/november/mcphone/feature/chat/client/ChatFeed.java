@@ -26,7 +26,7 @@ import java.util.UUID;
  */
 public final class ChatFeed {
     public enum Action { CHATS, CONTACTS, PROFILE, PICK_PHOTO }
-    private enum Page { FEED, DETAIL, COMPOSE }
+    private enum Page { FEED, DETAIL, COMPOSE, BLOCKS }
 
     private static final int CARD_GAP = 4, PAD = 3;
     private static final int FEED_LINES = 3;
@@ -41,7 +41,8 @@ public final class ChatFeed {
     private final List<SnsWire.Post> posts = new ArrayList<>();
     private int loadedPage = -1;
     private boolean more = true;
-    private UUID feedReq, detailReq, actionReq, postReq;
+    private UUID feedReq, detailReq, actionReq, postReq, blocksReq;
+    private final List<SnsWire.Post> blockedUsers = new ArrayList<>();
     private boolean uploading;
     private SnsWire.Post detail;
     private Path photo;
@@ -80,6 +81,7 @@ public final class ChatFeed {
         // 올리는 중인 글의 티켓은 놔둔다: 사진 업로드 정리는 SnsClientCache 가 따로 함
         feedReq = detailReq = actionReq = postReq = null;
         uploading = false;
+        SnsClientCache.cancel(blocksReq); blocksReq = null; blockedUsers.clear();
         posts.clear(); detail = null; photo = null; loadedPage = -1; more = true;
         postBox.reset(); commentBox.reset(); navigation.clear(); hits.clear();
         status = ""; confirm = ""; scroll = 0; page = Page.FEED; opened = false; pending = null;
@@ -124,6 +126,12 @@ public final class ChatFeed {
     private void loadMore() {
         if (feedReq != null || !more) return;
         feedReq = SnsClientCache.send(query(mineOnly ? SnsWire.Kind.MINE : SnsWire.Kind.FEED, null, null, "", false, loadedPage + 1));
+    }
+
+    private void openBlocks() {
+        go(Page.BLOCKS);
+        SnsClientCache.cancel(blocksReq);
+        blocksReq = SnsClientCache.send(query(SnsWire.Kind.BLOCKS, null, null, "", false, 0));
     }
 
     private void openDetail(SnsWire.Post p) {
@@ -215,9 +223,17 @@ public final class ChatFeed {
                 case DELETE_POST -> { say("deleted"); if (detail != null) remove(detail.id()); }
                 case REPORT -> say("reported");
                 case BLOCK -> { say("blocked"); go(Page.FEED); refresh(); }
+                case UNBLOCK -> { say("unblocked"); openBlocks(); refresh(); }
                 default -> {}
             }
         } else if (actionReq != null && !SnsClientCache.waiting(actionReq)) { actionReq = null; say("timeout"); }
+
+        r = SnsClientCache.consume(blocksReq);
+        if (r != null) {
+            blocksReq = null;
+            if (r.status() == SnsWire.Status.OK) { blockedUsers.clear(); blockedUsers.addAll(r.posts()); }
+            else sayStatus(r.status());
+        } else if (blocksReq != null && !SnsClientCache.waiting(blocksReq)) { blocksReq = null; say("timeout"); }
 
         r = SnsClientCache.consume(postReq);
         if (r != null) {
@@ -246,7 +262,7 @@ public final class ChatFeed {
         int bottom = top + sh - navH - (page == Page.FEED ? ChatLayout.TAB_HEIGHT : 2);
 
         // 머리줄
-        String title = switch (page) { case FEED -> tr("title"); case DETAIL -> tr("detail"); case COMPOSE -> tr("compose"); };
+        String title = switch (page) { case FEED -> tr("title"); case DETAIL -> tr("detail"); case COMPOSE -> tr("compose"); case BLOCKS -> tr("blocks"); };
         if (page != Page.FEED) {
             var back = new ChatLayout.Rect(x, y, 12, ChatLayout.HEADER_HEIGHT);
             ChatUi.sizedIcon(g, ChatUi.Icon.BACK, x + 2.5f, y + 2.5f, 7, back.contains(mx, my) ? ChatUi.accent() : FontPalette.body());
@@ -267,6 +283,7 @@ public final class ChatFeed {
             case FEED -> feed(g, font, x, y, w, bottom - statusLine, mx, my);
             case DETAIL -> detailPage(g, font, x, y, w, bottom - statusLine, mx, my, tick);
             case COMPOSE -> compose(g, font, x, y, w, bottom - statusLine, mx, my, tick);
+            case BLOCKS -> blocks(g, font, x, y, w, bottom - statusLine, mx, my);
         }
         if (showStatus)
             ChatUi.buttonText(g, font, ChatUi.truncate(font, status, w - 4, ChatLayout.META_SCALE), x + w / 2f, bottom - 4.5f, ChatLayout.META_SCALE, ChatUi.accent());
@@ -338,6 +355,12 @@ public final class ChatFeed {
             hits.add(new Hit(chip, () -> { if (mineOnly != mine) { mineOnly = mine; posts.clear(); refresh(); } }));
         }
         y += 14;
+        if (mineOnly) {
+            var manage = new ChatLayout.Rect(x, y, w, 12);
+            ChatProfileUi.row(g, font, manage, tr("blocks"), null, mx, my);
+            hits.add(new Hit(manage, this::openBlocks));
+            y += 15;
+        }
 
         beginScroll(g, x, y, w, bottom - y - 1);
         int cy = (int) (y - scroll);
@@ -461,6 +484,27 @@ public final class ChatFeed {
         var send = new ChatLayout.Rect(x + w - sendW, inputY, sendW, 14);
         ChatProfileUi.button(g, font, send, tr("send"), mx, my, actionReq == null ? ChatUi.accent() : FontPalette.dim());
         hits.add(new Hit(send, this::submitComment));
+    }
+
+    private void blocks(GuiGraphics g, Font font, int x, int y, int w, int bottom, int mx, int my) {
+        beginScroll(g, x, y, w, bottom - y - 1);
+        int cy = (int) (y - scroll);
+        for (SnsWire.Post u : blockedUsers) {
+            var row = new ChatLayout.Rect(x, cy, w, 16);
+            if (cy + 16 >= y && cy <= y + viewH) {
+                ChatUi.glass(g, ChatGlass.Surface.CARD, x, cy, w, 16, false);
+                PlayerAvatar.draw(g, u.author(), x + 3, cy + 3, 10);
+                ChatUi.label(g, font, ChatUi.truncate(font, u.name(), w - 48, ChatLayout.TEXT_SCALE), x + 16, cy + 8, ChatLayout.TEXT_SCALE, FontPalette.title());
+                var b = new ChatLayout.Rect(x + w - 30, cy + 2, 28, 12);
+                ChatProfileUi.button(g, font, b, tr("unblock"), mx, my, ChatUi.accent());
+                UUID id = u.author();
+                hitIn(b, () -> action(SnsWire.Kind.UNBLOCK, null, id, ""));
+            }
+            cy += 18;
+        }
+        if (blockedUsers.isEmpty())
+            ChatUi.buttonText(g, font, tr(blocksReq != null ? "loading" : "no_blocks"), x + w / 2f, cy + 8, ChatLayout.META_SCALE, FontPalette.subtle());
+        endScroll(g, (int) (cy + scroll - y) + 20);
     }
 
     private String confirmLabel(String key) {

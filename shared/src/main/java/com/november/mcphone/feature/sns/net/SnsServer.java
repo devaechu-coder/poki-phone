@@ -105,12 +105,32 @@ public final class SnsServer {
                 }
                 yield SnsWire.Reply.of(q, SnsWire.Status.OK);
             }
+            case BLOCKS -> {
+                // 차단 목록: 글 자리에 (id=author=차단한 사람, name) 만 채워서 보냄
+                List<SnsWire.Post> out = new ArrayList<>();
+                for (UUID id : data.blocked(me)) {
+                    if (out.size() >= 60) break;
+                    out.add(new SnsWire.Post(id, id, nameOf(server, data, id), 0L, "", null, 0, 0, 0, false, 0, false, List.of()));
+                }
+                yield new SnsWire.Reply(q.request(), q.kind(), SnsWire.Status.OK, 0, false, out);
+            }
             case BLOCK, UNBLOCK -> {
                 if (SnsWire.none(q.target()) || q.target().equals(me)) throw new IllegalArgumentException();
                 data.block(me, q.target(), q.kind() == SnsWire.Kind.BLOCK);
                 yield SnsWire.Reply.of(q, SnsWire.Status.OK);
             }
         };
+    }
+
+    private static String nameOf(MinecraftServer server, SnsData data, UUID id) {
+        var online = server.getPlayerList().getPlayer(id);
+        if (online != null) return clean(online.getName().getString(), SnsWire.NAME_LENGTH);
+        try {
+            var cache = server.getProfileCache();
+            if (cache != null) { var gp = cache.get(id); if (gp.isPresent()) return clean(gp.get().getName(), SnsWire.NAME_LENGTH); }
+        } catch (RuntimeException ignored) {}
+        for (var p : data.posts()) if (p.author.equals(id)) return p.name;
+        return id.toString().substring(0, 8);
     }
 
     // ── 글 목록 ─────────────────────

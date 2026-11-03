@@ -11,7 +11,7 @@
 - 앱스토어·브라우저·스크립트 앱(.vue) 제거 (services 목록, `PhoneScreenRegistry.register`)
 - 포키톡 사진은 포키폰 카메라로 찍은 것만 (`CameraPhotos`, 게임 폴더 `mcphone/camera_photos.txt`), 파일 끌어다 놓기 막음
 - "나" 탭에서 GitHub·후원 제거
-- 둘러보기 탭 = 포키 SNS (`feature/sns`, 화면 `ChatFeed`)
+- 「SNS」 탭(원래 둘러보기) = 포키 SNS · 차단 해제는 「내 글 → 차단 목록」 (`feature/sns`, 화면 `ChatFeed`)
   - 글 300자 + 카메라 사진 1장 (사진은 채팅 사진 업로드를 예약 대상 `SnsWire.PEER` 로 재사용), 좋아요, 댓글 200자
   - 5일 지나면 글·사진 자동 삭제, 욕설 필터(`SnsFilter`), 글 1분 1개·하루 10개, 댓글 5초
   - 신고 3회 → 피드에서 숨김 + 운영진 검토함. 차단한 사람 글·댓글은 안 보임
