@@ -56,6 +56,8 @@ public final class PhoneScreenRegistry {
 
     /** 登记进目录，不改安装状态。同 id 重复登记保留先注册的并告警 */
     public static boolean register(IPhoneApp app) {
+        // 포키: 스크립트 앱(컴퓨터에 넣은 .vue 앱)은 안 받음
+        if (app != null && app.getClass().getName().equals("com.november.mcphone.core.script.client.ScriptAppAdapter")) return false;
         if (app == null || app.getId() == null) {
             MCphone.LOGGER.warn("[MCphone] App 登记失败: id 为空");
             return false;

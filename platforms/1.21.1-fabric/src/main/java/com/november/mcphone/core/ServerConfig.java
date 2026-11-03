@@ -62,8 +62,7 @@ public final class ServerConfig {
      * ——图标先没有、配置到了又冒出来。
      */
     public static boolean allowFriendTeleport() {
-        if (synced) return syncedAllowFriendTeleport;
-        return !loaded || allowFriendTeleport;
+        return false; // 포키: 친구한테 순간이동은 항상 끔
     }
 
     /** 允不允许在美西螈里发图片。没加载时返回 true，理由同 {@link #allowFriendTeleport()} */

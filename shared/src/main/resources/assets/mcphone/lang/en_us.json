@@ -574,5 +574,6 @@
   "mcphone.script.client_function.failed": "Action failed. Page data was kept. See the client log for details.",
   "mcphone.script.initialization.failed": "Page initialization failed. Default values were kept. See the client log for details.",
   "mcphone.script.http_callback.failed": "Response processing failed. Page data was kept. See the client log for details.",
-  "mcphone.script.open_url.failed": "Could not open the webpage. Check your system's default browser."
+  "mcphone.script.open_url.failed": "Could not open the webpage. Check your system's default browser.",
+  "mcphone.chat.camera_only": "Only photos taken with the phone camera can be sent"
 }

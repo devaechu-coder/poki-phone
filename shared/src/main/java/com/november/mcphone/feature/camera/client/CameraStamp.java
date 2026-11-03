@@ -234,6 +234,16 @@ public final class CameraStamp {
      */
     @Nullable
     public static String fileName(File gameDirectory, @Nullable Player player) {
+        String name = fileName0(gameDirectory, player);
+        // 포키: 좌표 도장이 꺼져 있어도 카메라 사진엔 이름을 붙여서 '카메라로 찍은 사진' 목록에 적음
+        if (name == null) name = nextName(PhonePaths.SCREENSHOTS.in(gameDirectory.toPath()).toFile(),
+                "poki_" + Util.getFilenameFormattedDateTime());
+        CameraPhotos.add(name);
+        return name;
+    }
+
+    @Nullable
+    private static String fileName0(File gameDirectory, @Nullable Player player) {
         if (!enabled || player == null) return null;
 
         String base = Util.getFilenameFormattedDateTime()

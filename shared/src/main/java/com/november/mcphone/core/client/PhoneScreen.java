@@ -398,6 +398,7 @@ public final class PhoneScreen extends PhoneScreenBase {
      */
     @Override
     public void onFilesDrop(List<Path> files) {
+        if (true) return; // 포키: 게임 창에 파일 끌어다 놓기 막음 (컴퓨터 사진·스티커·책 가져오기)
         if (changelogPopup) return;
         // 表情页开着时，拖进来是"收进表情目录"而不是"发出去"：那一页的语境就是攒表情。
         // 这也是表情唯一的游戏内导入方式——弹系统文件选择器要 AWT，在 macOS 上与游戏抢主线程

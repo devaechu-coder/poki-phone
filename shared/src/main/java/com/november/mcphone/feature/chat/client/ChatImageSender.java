@@ -180,6 +180,11 @@ public final class ChatImageSender {
     public static void sendGroup(UUID group, Path photo) { send(group, photo, true); }
     private static void send(UUID peer, Path photo, boolean group) {
         if (peer == null || photo == null) return;
+        // 포키: 포키폰 카메라로 찍은 사진만 (스크린샷·컴퓨터 사진·스티커 막음)
+        if (!com.november.mcphone.feature.camera.client.CameraPhotos.isCamera(photo)) {
+            tell("mcphone.chat.camera_only");
+            return;
+        }
 
         if (isBusy()) {
             if (isFull()) tell("mcphone.chat.image_too_fast");
