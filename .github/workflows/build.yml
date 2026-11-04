@@ -55,6 +55,16 @@ jobs:
         shell: bash
         run: |
           TAG="v${{ steps.v.outputs.ver }}"
-          if gh release view "$TAG" >/dev/null 2>&1; then echo "$TAG 있음 — 건너뜀"; else
-            gh release create "$TAG" "${{ steps.v.outputs.jar }}" --title "포키폰 ${{ steps.v.outputs.ver }}" --notes "MCphone 포크 (MIT)"
-          fi
+          JAR="${{ steps.v.outputs.jar }}"
+          for i in 1 2 3 4 5; do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              # 502/500 으로 중간에 멈춘 릴리스(초안·jar 없음)도 여기서 마무리
+              N=$(gh release view "$TAG" --json assets -q '.assets|length' || echo 0)
+              if [ "$N" = "0" ]; then gh release upload "$TAG" "$JAR" --clobber || { sleep 20; continue; }; fi
+              gh release edit "$TAG" --draft=false || { sleep 20; continue; }
+              echo "$TAG 준비됨"; exit 0
+            fi
+            gh release create "$TAG" "$JAR" --title "포키폰 ${{ steps.v.outputs.ver }}" --notes "MCphone 포크 (MIT)" && exit 0
+            sleep 20
+          done
+          exit 1
