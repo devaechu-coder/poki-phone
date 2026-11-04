@@ -140,6 +140,7 @@ public final class NetworkHandler {
         com.november.mcphone.feature.chat.profile.net.ProfileNetworking.register();
         // 포키 SNS: 맨 끝에 추가
         com.november.mcphone.feature.sns.net.SnsNetworking.register();
+        com.november.mcphone.feature.gym.net.GymNetworking.register();
     }
 
     //  处理函数
