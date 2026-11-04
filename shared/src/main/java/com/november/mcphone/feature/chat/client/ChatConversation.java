@@ -231,6 +231,13 @@ public final class ChatConversation {
         messages.latest();
     }
 
+    /** 포키: 내 파티 포켓몬 카드 보내기 (서버가 파티를 읽어 카드로 바꿈) */
+    public void sendPokemon(int slot) {
+        if (channel == null || profileSuspended) return;
+        channel.send(com.november.mcphone.feature.chat.PokemonCard.request(slot));
+        messages.latest();
+    }
+
     /** 포키냥 이모티콘 보내기 (그냥 글자 메시지) */
     public void sendSticker(int n) {
         if (channel == null || profileSuspended) return;

@@ -255,7 +255,7 @@ final class ChatComposer {
         attachHovered = null;
         int rowY = menuY + MENU_PAD;
         for (ChatAttachment item : items) {
-            boolean enabled = item == ChatAttachment.LOCATION || canSendImages;
+            boolean enabled = item != ChatAttachment.IMAGE || canSendImages;
             boolean hovered = enabled && GuiUtil.hit(mouseX, mouseY, menuX, rowY, width, rowH - 1);
             if (hovered) {
                 attachHovered = item;

@@ -37,7 +37,9 @@ final class ChatMessageLayout {
         /** 文字气泡 */
         TEXT,
         /** 一张图，不套文字气泡 */
-        IMAGE
+        IMAGE,
+        /** 포키: 포켓몬 카드 */
+        CARD
     }
 
     /**
@@ -94,6 +96,12 @@ final class ChatMessageLayout {
             // 포키냥 이모티콘은 말풍선 대신 그림으로
             int sticker = m.body() instanceof TextBody st && st.quote().isEmpty()
                     ? com.november.mcphone.feature.chat.PokiSticker.parse(st.text()) : -1;
+            if (m.body() instanceof TextBody ct && com.november.mcphone.feature.chat.PokemonCard.isCard(ct.text())) {
+                int cw = Math.max(60, Math.min(PokemonCardView.WIDTH, bubbleMaxW));
+                out.add(new Block(BlockType.CARD, self, List.of(), null, cw, PokemonCardView.HEIGHT,
+                        1, 0, placement(PokemonCardView.HEIGHT, nameLineHeight, senderLineHeight, group), null, m, null));
+                continue;
+            }
             if (sticker > 0) {
                 int side = Math.max(16, Math.min(56, bubbleMaxW));
                 out.add(new Block(BlockType.IMAGE, self, List.of(), PokiStickers.id(sticker), side, side,

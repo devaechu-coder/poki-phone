@@ -6,6 +6,8 @@ import net.minecraft.network.chat.Component;
 public enum ChatAttachment {
     IMAGE("mcphone.chat.attach_image"),
     STICKER("mcphone.chat.attach_sticker"),
+    /** 포키: 내 파티 포켓몬 카드 */
+    POKEMON("mcphone.chat.attach_pokemon"),
     LOCATION("mcphone.chat.layout.location");
 
     private final String labelKey;

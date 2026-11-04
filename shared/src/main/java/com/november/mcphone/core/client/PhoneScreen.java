@@ -67,7 +67,7 @@ import java.util.UUID;
 /** 手机主屏幕 GUI：管理各页面之间的导航（{@link Mode}）、分发输入、兜住附属页面的异常 */
 public final class PhoneScreen extends PhoneScreenBase {
 
-    public enum Mode { MAIN, SETTINGS, WALLPAPER_PICKER, FONT_COLOR_PICKER, UI_SCALE, HUD, APP_MANAGER, APP_MANAGER_DETAIL, MUSIC_PLAYER, APP_STORE, APP_DETAIL, COMPANION_APPS, ADDON_PAGE, ABOUT, CHANGELOG, GALLERY, DEVICE_NAME, CHAT, CHAT_PROFILE, CHAT_PLAYER_PROFILE, CHAT_CONTACTS, CHAT_NEW_FRIENDS, CHAT_ADD_CONTACT, CHAT_CONVERSATION, CHAT_GROUP_CONVERSATION, CHAT_GROUP_CREATE, CHAT_GROUP_DETAILS, CHAT_PHOTO_PICKER, CHAT_STICKER_PICKER, CHAT_FEED, CHAT_FEED_PHOTO_PICKER, GYM, NOTES, NOTE_EDIT, CLOCK, WEATHER, READER, TXT_BOOK, VAULT, AUTHOR_KEY }
+    public enum Mode { MAIN, SETTINGS, WALLPAPER_PICKER, FONT_COLOR_PICKER, UI_SCALE, HUD, APP_MANAGER, APP_MANAGER_DETAIL, MUSIC_PLAYER, APP_STORE, APP_DETAIL, COMPANION_APPS, ADDON_PAGE, ABOUT, CHANGELOG, GALLERY, DEVICE_NAME, CHAT, CHAT_PROFILE, CHAT_PLAYER_PROFILE, CHAT_CONTACTS, CHAT_NEW_FRIENDS, CHAT_ADD_CONTACT, CHAT_CONVERSATION, CHAT_GROUP_CONVERSATION, CHAT_GROUP_CREATE, CHAT_GROUP_DETAILS, CHAT_PHOTO_PICKER, CHAT_STICKER_PICKER, CHAT_FEED, CHAT_FEED_PHOTO_PICKER, GYM, CHAT_POKEMON_PICKER, NOTES, NOTE_EDIT, CLOCK, WEATHER, READER, TXT_BOOK, VAULT, AUTHOR_KEY }
 
     private final long openTimeMs;
     private boolean animationDone;
@@ -151,6 +151,9 @@ public final class PhoneScreen extends PhoneScreenBase {
     private final ChatMediaPicker chatFeedPicker = new ChatMediaPicker(
             PhotoLibrary.folder(), "mcphone.sns.pick_photo", "mcphone.chat.pick_photo_empty", false);
 
+    /** 포키: 포켓몬 카드로 보낼 파티 포켓몬 고르기 */
+    private final com.november.mcphone.feature.chat.client.PokemonPartyPicker chatPokemonPicker =
+            new com.november.mcphone.feature.chat.client.PokemonPartyPicker();
     /** 포키: 스티커 칸은 포키냥 이모티콘 (사진 업로드 아님) */
     private final com.november.mcphone.feature.chat.client.PokiStickerPicker chatStickerPicker =
             new com.november.mcphone.feature.chat.client.PokiStickerPicker();
@@ -339,6 +342,8 @@ public final class PhoneScreen extends PhoneScreenBase {
 
         if (this.mode == Mode.CHAT_STICKER_PICKER) chatStickerPicker.close();
         if (target == Mode.CHAT_STICKER_PICKER) chatStickerPicker.open();
+        if (this.mode == Mode.CHAT_POKEMON_PICKER) chatPokemonPicker.close();
+        if (target == Mode.CHAT_POKEMON_PICKER) chatPokemonPicker.open();
         // 포키 SNS: 사진 고르러 갔다 와도 쓰던 글은 그대로
         if (this.mode == Mode.CHAT_FEED_PHOTO_PICKER) chatFeedPicker.close();
         if (target == Mode.CHAT_FEED_PHOTO_PICKER) chatFeedPicker.open();
@@ -748,7 +753,7 @@ public final class PhoneScreen extends PhoneScreenBase {
         if (mode == Mode.GYM) { if (!com.november.mcphone.feature.chat.client.GymPage.back()) navigateTo(Mode.MAIN); return true; }
         if (mode == Mode.CHAT_FEED) { if (!chatFeed.back()) navigateTo(Mode.CHAT); return true; }
         // 选照片、选表情都是从某个会话点进来的，返回自然回那个会话
-        if (mode == Mode.CHAT_PHOTO_PICKER || mode == Mode.CHAT_STICKER_PICKER) {
+        if (mode == Mode.CHAT_PHOTO_PICKER || mode == Mode.CHAT_STICKER_PICKER || mode == Mode.CHAT_POKEMON_PICKER) {
             navigateTo(conversationMode());
             return true;
         }
@@ -1056,6 +1061,7 @@ public final class PhoneScreen extends PhoneScreenBase {
             case CHAT_PHOTO_PICKER -> chatPhotoPicker.render(g, phoneLeft, phoneTop,
                     sw, sh, statusH, navH,
                     mouseX, mouseY, font);
+            case CHAT_POKEMON_PICKER -> chatPokemonPicker.render(g, phoneLeft, phoneTop, sw, sh, statusH, navH, mouseX, mouseY, font);
             case CHAT_STICKER_PICKER -> chatStickerPicker.render(g, phoneLeft, phoneTop,
                     sw, sh, statusH, navH,
                     mouseX, mouseY, font);
@@ -1528,10 +1534,11 @@ public final class PhoneScreen extends PhoneScreenBase {
                 if (attach != null) {
                     switch (attach) {
                         case LOCATION -> chatConversation.sendLocation();
-                        case IMAGE, STICKER -> {
+                        case IMAGE, STICKER, POKEMON -> {
                             // 先记下是谁：进挑东西那一页会 close 掉会话，对端就没了
                             pendingConversationPeer = chatConversation.peer();
-                            navigateTo(attach == ChatAttachment.IMAGE ? Mode.CHAT_PHOTO_PICKER : Mode.CHAT_STICKER_PICKER);
+                            navigateTo(attach == ChatAttachment.IMAGE ? Mode.CHAT_PHOTO_PICKER
+                                    : attach == ChatAttachment.POKEMON ? Mode.CHAT_POKEMON_PICKER : Mode.CHAT_STICKER_PICKER);
                         }
                     }
                 }
@@ -1559,6 +1566,12 @@ public final class PhoneScreen extends PhoneScreenBase {
             case CHAT_PHOTO_PICKER -> {
                 chatPhotoPicker.mouseClicked(mx, my, button);
                 sendPicked(chatPhotoPicker.consumeSelection());
+                yield true;
+            }
+            case CHAT_POKEMON_PICKER -> {
+                chatPokemonPicker.mouseClicked(mx, my, button);
+                int slot = chatPokemonPicker.consumeSelection();
+                if (slot >= 0) { navigateTo(conversationMode()); chatConversation.sendPokemon(slot); }
                 yield true;
             }
             case CHAT_STICKER_PICKER -> {
@@ -1928,7 +1941,7 @@ public final class PhoneScreen extends PhoneScreenBase {
         // （见 TxtReaderPage.close），下次开机没有可续的东西，停在书架上最贴近。
         // 这一步在这里做而不在 PhoneSession 里：TXT_BOOK 这个常量只有本目标有
         PhoneSession.save(location, mode == Mode.TXT_BOOK ? Mode.READER
-                : (mode == Mode.CHAT_PLAYER_PROFILE ? profileReturnMode : mode == Mode.CHAT_ADD_CONTACT ? chatReturnMode : (mode == Mode.CHAT_PHOTO_PICKER || mode == Mode.CHAT_STICKER_PICKER ? conversationMode() : mode == Mode.CHAT_FEED_PHOTO_PICKER ? Mode.CHAT_FEED : mode)), pendingConversationPeer);
+                : (mode == Mode.CHAT_PLAYER_PROFILE ? profileReturnMode : mode == Mode.CHAT_ADD_CONTACT ? chatReturnMode : (mode == Mode.CHAT_PHOTO_PICKER || mode == Mode.CHAT_STICKER_PICKER || mode == Mode.CHAT_POKEMON_PICKER ? conversationMode() : mode == Mode.CHAT_FEED_PHOTO_PICKER ? Mode.CHAT_FEED : mode)), pendingConversationPeer);
 
         if (mode == Mode.GALLERY) gallery.close();
         if (mode == Mode.CHAT_PHOTO_PICKER) chatPhotoPicker.close();

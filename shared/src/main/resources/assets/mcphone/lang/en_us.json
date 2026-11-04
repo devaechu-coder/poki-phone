@@ -664,5 +664,18 @@
   "mcphone.gym.status.no_gym": "이 서버엔 체육관 정보가 없어요.",
   "mcphone.gym.status.forbidden": "폰을 들고 있어야 해요.",
   "mcphone.gym.status.busy": "잠깐만요, 너무 빨라요.",
-  "mcphone.gym.status.ok": ""
+  "mcphone.gym.status.ok": "",
+  "mcphone.chat.attach_pokemon": "포켓몬",
+  "mcphone.chat.pokemon_card": "[포켓몬 카드]",
+  "mcphone.chat.pick_pokemon": "보낼 포켓몬 고르기",
+  "mcphone.chat.pick_pokemon_empty": "파티에 포켓몬이 없어요.",
+  "mcphone.chat.pick_pokemon_note": "정보만 카드로 보내요. 포켓몬이 넘어가지 않아요.",
+  "mcphone.chat.card.ability": "특성",
+  "mcphone.chat.card.ot": "어버이 %s",
+  "mcphone.chat.card.stat.hp": "HP",
+  "mcphone.chat.card.stat.atk": "공격",
+  "mcphone.chat.card.stat.def": "방어",
+  "mcphone.chat.card.stat.spa": "특공",
+  "mcphone.chat.card.stat.spd": "특방",
+  "mcphone.chat.card.stat.spe": "스피드"
 }

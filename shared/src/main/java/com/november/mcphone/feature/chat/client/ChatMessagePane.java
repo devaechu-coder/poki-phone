@@ -212,6 +212,10 @@ final class ChatMessagePane {
             renderImageBlock(g, font, b, bx, contentY);
             return;
         }
+        if (b.type() == BlockType.CARD) {
+            PokemonCardView.draw(g, font, ((com.november.mcphone.feature.chat.TextBody) b.message().body()).text(), bx, contentY, b.w());
+            return;
+        }
 
         ChatUi.bubble(g, b.self(), bx, contentY, b.w(), b.h());
 

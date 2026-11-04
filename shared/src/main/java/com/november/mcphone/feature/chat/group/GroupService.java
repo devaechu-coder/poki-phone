@@ -44,7 +44,9 @@ public final class GroupService {
         requirePhone(player);
         var room = read(player,group);
         String text = TextSanitizer.sanitize(raw, TextBody.MAX_LENGTH);
-        if (text.isBlank()) throw new GroupFault(GroupStatus.INVALID);
+        // 포키: 포켓몬 카드 (ChatService 와 같은 규칙)
+        text = com.november.mcphone.feature.chat.PokemonCard.serverRewrite(player, text);
+        if (text == null || text.isBlank()) throw new GroupFault(GroupStatus.INVALID);
         UUID id = reply.isPresent() ? com.november.mcphone.feature.chat.ChatReplyIdentity.messageId(player.getUUID(),group,true,ticket) : UUID.randomUUID();
         if (reply.isPresent()) {
             var existing = room.messages().stream().filter(m -> m.message().id().equals(id)).findFirst();

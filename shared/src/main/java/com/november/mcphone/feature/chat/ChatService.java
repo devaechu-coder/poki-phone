@@ -69,7 +69,9 @@ public final class ChatService {
         if (reply.isPresent() != ticket.isPresent()) return null;
         if (!FriendGuard.mayActOn(sender, targetId)) return null;
         String text = TextSanitizer.sanitize(rawText, TextBody.MAX_LENGTH);
-        if (text.isEmpty()) return null;
+        // 포키: 포켓몬 카드 요청은 서버가 파티를 읽어 카드로 바꿈, 손으로 친 가짜 카드는 막음
+        text = PokemonCard.serverRewrite(sender, text);
+        if (text == null || text.isEmpty()) return null;
         UUID id = ticket.map(value -> ChatReplyIdentity.messageId(sender.getUUID(),targetId,false,value)).orElseGet(UUID::randomUUID);
         // 先确认已落库的同一次提交，再找原文；原文可能已经被 100 条上限挤走。
         if (ticket.isPresent()) {
