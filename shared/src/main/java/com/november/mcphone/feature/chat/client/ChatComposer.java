@@ -24,8 +24,7 @@ final class ChatComposer {
     private static final int ATTACH_BTN = 9;
     private static final int MENU_PAD = 3;
     private static final int MENU_ROW_EXTRA = 3;
-    private static final String[] RESERVED_ATTACH_KEYS = {
-            "mcphone.chat.layout.voice", "mcphone.chat.layout.file"};
+    private static final String[] RESERVED_ATTACH_KEYS = {}; // 포키: 음성·파일 "준비 중" 자리 뺌
     private static int colorSend() { return ChatUi.accent(); }
     private static int colorSendHover() { return FontPalette.current().darkText() ? 0xFF863A66 : 0xFFFFD5E9; }
     private static int colorSendOff() { return FontPalette.muted(); }

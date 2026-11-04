@@ -30,7 +30,7 @@ public final class GymPage {
     private record Hit(ChatLayout.Rect r, Runnable run) {}
     private static final List<Hit> HITS = new ArrayList<>();
 
-    private static final int GOLD = 0xFFE8B323, GREEN = 0xFF4F9A5A, ORANGE = 0xFFC8820A, LOCK = 0xFFAAA4B4;
+    private static final int GOLD = 0xFFE8B323, GREEN = 0xFF6FCF7F, ORANGE = 0xFFFFC94A, LOCK = 0xFFAAA4B4;
 
     private static String tr(String k) { return Component.translatable("mcphone.gym." + k).getString(); }
 
@@ -160,8 +160,14 @@ public final class GymPage {
             var row = new ChatLayout.Rect(x, y, w, 22);
             if (y + 22 >= top && y <= bottom) {
                 boolean hover = row.contains(mx, my) && my >= top && my < bottom;
-                if (i == nx) ChatUi.roundedFill(g, x, y, w, 22, GOLD);
-                ChatUi.glass(g, ChatGlass.Surface.CARD, x + (i == nx ? 1 : 0), y + (i == nx ? 1 : 0), w - (i == nx ? 2 : 0), 22 - (i == nx ? 2 : 0), hover);
+                ChatUi.glass(g, ChatGlass.Surface.CARD, x, y, w, 22, hover);
+                if (i == nx) {
+                    // 다음 도전: 금색 테두리 1px + 왼쪽 띠 (글자 위에 색을 깔지 않음)
+                    g.fill(x + 2, y, x + w - 2, y + 1, GOLD); g.fill(x + 2, y + 21, x + w - 2, y + 22, GOLD);
+                    g.fill(x, y + 2, x + 1, y + 20, GOLD); g.fill(x + w - 1, y + 2, x + w, y + 20, GOLD);
+                    g.fill(x + 1, y + 1, x + 2, y + 2, GOLD); g.fill(x + w - 2, y + 1, x + w - 1, y + 2, GOLD);
+                    g.fill(x + 1, y + 20, x + 2, y + 21, GOLD); g.fill(x + w - 2, y + 20, x + w - 1, y + 21, GOLD);
+                }
                 int col = typeColor(gym.type());
                 badge(g, font, gym.type(), x + 11, y + 11, 8, col, gym.cleared(), i + 1);
                 ChatUi.label(g, font, ChatUi.truncate(font, gym.name(), w - 70, ChatLayout.TEXT_SCALE), x + 22, y + 7, ChatLayout.TEXT_SCALE,
