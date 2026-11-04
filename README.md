@@ -8,7 +8,7 @@
 ## 포키에서 바꾼 것
 - 한국어 (`ko_kr`) — 채팅 앱 "포키톡", 폰 "포키폰"
 - 친구 순간이동 항상 끔 (`ServerConfig.allowFriendTeleport`)
-- 앱스토어·브라우저·스크립트 앱(.vue)·음악·책(리더) 제거 (외부 파일 가져오기 막기) (services 목록, `PhoneScreenRegistry.register`)
+- 앱스토어·브라우저·스크립트 앱(.vue)·음악·책(리더)·엔더상자·웨이스톤 제거 (외부 파일 가져오기 막기) (services 목록, `PhoneScreenRegistry.register`)
 - 포키톡 사진은 포키폰 카메라로 찍은 것만 (`CameraPhotos`, 게임 폴더 `mcphone/camera_photos.txt`), 파일 끌어다 놓기 막음
 - "나" 탭에서 GitHub·후원 제거
 - 포키냥 이모티콘 17종 (`PokiSticker`, 그림은 `textures/poki_sticker`, 메시지는 `[[포키냥:N]]` 글자만 오감 · 입력칸 웃는 얼굴 버튼)
