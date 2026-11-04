@@ -39,9 +39,14 @@ public final class PokemonPartyPicker {
             Object client = cc.getField("INSTANCE").get(null);
             Object party = get(get(client, "storage"), "myParty");
             if (party == null) return out;
-            Method slot = party.getClass().getMethod("get", int.class);
-            for (int i = 0; i < 6; i++) {
-                Object pk = slot.invoke(party, i);
+            // 코블몬 ClientParty: slots(빈칸 포함 목록)가 있으면 그 순서가 서버 파티 칸 번호와 같음
+            List<?> slots = null;
+            Object raw = get(party, "slots");
+            if (raw instanceof List<?> l) slots = l;
+            else if (party instanceof Iterable<?> it) { var l = new ArrayList<Object>(); for (Object o : it) l.add(o); slots = l; }
+            if (slots == null) return out;
+            for (int i = 0; i < Math.min(6, slots.size()); i++) {
+                Object pk = slots.get(i);
                 if (pk == null) continue;
                 Object id = get(get(pk, "species"), "resourceIdentifier");
                 if (id == null) continue;

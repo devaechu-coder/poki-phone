@@ -1,0 +1,14 @@
+name: 코블몬 API 살펴보기 (임시)
+on:
+  push:
+    paths: [".github/workflows/inspect-cobblemon.yml"]
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - run: |
+          URL=$(curl -fsSL -G 'https://api.modrinth.com/v2/project/cobblemon/version' --data-urlencode 'loaders=["fabric"]' --data-urlencode 'game_versions=["1.21.1"]' | jq -r '[.[] | select(.version_number | startswith("1.7"))][0].files[] | select(.primary) | .url')
+          curl -fsSL -o c.jar "$URL"
+          for c in com.cobblemon.mod.common.client.CobblemonClient com.cobblemon.mod.common.client.storage.ClientStorageManager com.cobblemon.mod.common.client.storage.ClientParty com.cobblemon.mod.common.client.storage.ClientStorage; do echo "=== $c"; javap -cp c.jar $c | grep -iE "public|class" | head -30; done
