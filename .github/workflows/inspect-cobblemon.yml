@@ -1,0 +1,19 @@
+name: 코블몬 API 살펴보기 (임시)
+on: workflow_dispatch
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - run: |
+          URL=$(curl -fsSL -G 'https://api.modrinth.com/v2/project/cobblemon/version' \
+            --data-urlencode 'loaders=["fabric"]' --data-urlencode 'game_versions=["1.21.1"]' \
+            | jq -r '[.[] | select(.version_number | startswith("1.7"))][0].files[] | select(.primary) | .url')
+          echo "$URL"; curl -fsSL -o c.jar "$URL"
+          unzip -l c.jar | grep -iE "client/gui/(PokemonGuiUtils|.*Profile|summary/Summary)|RenderablePokemon|FloatingState|client/render/models/blockbench/PosableState|pokedex/.*Model" | head -40
+          mkdir x && cd x && unzip -q ../c.jar
+          for c in com/cobblemon/mod/common/client/gui/PokemonGuiUtilsKt com/cobblemon/mod/common/pokemon/RenderablePokemon com/cobblemon/mod/common/client/render/models/blockbench/FloatingState com/cobblemon/mod/common/api/pokemon/PokemonSpecies; do
+            echo "=== $c"; javap -cp . "$c" 2>&1 | head -60; done
+          grep -rl "drawProfilePokemon" --include=*.class . | head
+          echo "=== Species aspects/resourceIdentifier"; javap -cp . com.cobblemon.mod.common.pokemon.Species | grep -iE "getResourceIdentifier|getTranslatedName|getStandardForm|getName\b" | head
