@@ -22,7 +22,8 @@ final class ChatContextMenu {
         if(target.copyable()) expanded.add(ChatMessageAction.COPY);
         if(favorite) expanded.add(ChatMessageAction.FAVORITE);
         if(reply) expanded.add(ChatMessageAction.REPLY);
-        expanded.add(ChatMessageAction.DELETE);items=List.copyOf(expanded);
+        // 포키: 삭제는 뺌 (내 화면에서만 지워져서 캡처 조작에 쓰일 수 있음)
+        items=List.copyOf(expanded);
         view.open(x,y);
     }
     boolean dismiss() { boolean wasOpen=view.dismiss(); target=null; items=List.of(); return wasOpen; }

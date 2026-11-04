@@ -27,5 +27,7 @@ final class ChatScrollState {
     }
 
     void latest() { offset = 0; }
+    /** 포키: 답장 원문으로 이동 (다음 viewport 에서 범위로 맞춰짐) */
+    void set(int value) { offset = Math.max(0, Math.min(value, limit)); }
     void reset() { contentHeight = offset = limit = 0; }
 }

@@ -78,9 +78,39 @@ final class ChatMessagePane {
         return null;
     }
 
+    /** 포키: 답장 원문 반짝임 */
+    private UUID flashId;
+    private long flashUntil;
+
+    /** 답장 인용을 누르면 원문 위치로 스크롤. 원문이 목록에 없으면 false */
+    private boolean jumpTo(UUID id) {
+        int p = 0;
+        for (Block b : blocks) {
+            if (b.message() != null && b.message().id().equals(id)) {
+                int viewH = messageBottom - messageTop;
+                scroll.set(scroll.contentHeight() - p - Math.max(0, viewH - 12));
+                flashId = id; flashUntil = System.currentTimeMillis() + 1200;
+                return true;
+            }
+            p += b.rowHeight() + BLOCK_GAP;
+        }
+        return false;
+    }
+
     boolean mouseClicked(double mx, double my) {
         selection.clear();
         if (my < messageTop || my >= messageBottom) return false;
+        for (TextHit hit : textHits) {
+            Block b = hit.block();
+            if (b.quoteHeight() > 0 && GuiUtil.hit(mx, my, hit.x(), hit.y(), b.w(), b.quoteHeight())
+                    && b.message().body() instanceof com.november.mcphone.feature.chat.TextBody t && t.quote().isPresent()) {
+                if (!jumpTo(t.quote().get().message())) {
+                    var p = net.minecraft.client.Minecraft.getInstance().player;
+                    if (p != null) com.november.mcphone.platform.PlayerAccess.message(p, Component.translatable("mcphone.chat.reply.too_old"), true);
+                }
+                return true;
+            }
+        }
         for (TextHit hit : textHits) {
             Block b = hit.block();
             if (b.text().selectable() && GuiUtil.hit(mx, my, hit.x(), hit.y()+b.quoteHeight(), b.w(), b.h()-b.quoteHeight())) {
@@ -218,6 +248,8 @@ final class ChatMessagePane {
         }
 
         ChatUi.bubble(g, b.self(), bx, contentY, b.w(), b.h());
+        if (flashId != null && b.message().id().equals(flashId) && System.currentTimeMillis() < flashUntil)
+            g.fill(bx, contentY, bx + b.w(), contentY + b.h(), 0x40FFFFFF);
 
         if (b.message().body() instanceof com.november.mcphone.feature.chat.TextBody text && text.quote().isPresent())
             ChatReplyView.draw(g,font,text.quote().get(),bx+3,contentY,b.w()-6);

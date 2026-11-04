@@ -11,8 +11,11 @@ final class ChatReplyView {
     static final int HEIGHT = 18, DRAFT_HEIGHT = 21;
     private ChatReplyView() {}
     static String summary(ChatQuote quote) {
-        return quote.image() ? Component.translatable("mcphone.chat.reply.image").getString()
-                : quote.text().replace('\n',' ').replace('\r',' ');
+        if (quote.image()) return Component.translatable("mcphone.chat.reply.image").getString();
+        // 포키: 이모티콘·포켓몬 카드는 글자 대신 이름으로 (답장 원문은 잘려서 올 수 있음)
+        if (com.november.mcphone.feature.chat.PokiSticker.parse(quote.text()) > 0) return Component.translatable("mcphone.chat.poki_sticker").getString();
+        if (quote.text().startsWith(com.november.mcphone.feature.chat.PokemonCard.HEAD)) return Component.translatable("mcphone.chat.pokemon_card").getString();
+        return quote.text().replace('\n',' ').replace('\r',' ');
     }
     static void draw(GuiGraphics g, Font font, ChatQuote quote, int x, int y, int width) {
         if (width < 8) return;
