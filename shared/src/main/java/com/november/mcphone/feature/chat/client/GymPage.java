@@ -78,6 +78,27 @@ public final class GymPage {
         }
     }
 
+    /** 타입별 포키 배지 그림 (textures/gym/badge_N.png, 64×64). 모르는 타입이면 0 */
+    private static int badgeIndex(String type) {
+        return switch (type) {
+            case "바위" -> 1; case "물" -> 2; case "전기" -> 3; case "풀" -> 4;
+            case "독" -> 5; case "에스퍼" -> 6; case "불꽃" -> 7; case "땅" -> 8; default -> 0;
+        };
+    }
+
+    /** 배지 그림이 있으면 그걸로 (안 깬 건 흐리게), 없으면 번호 동그라미 */
+    private static void badge(GuiGraphics g, Font font, String type, int cx, int cy, int r, int color, boolean on, int num) {
+        int idx = badgeIndex(type);
+        if (idx == 0) { medal(g, font, cx, cy, r, color, on, num); return; }
+        var tex = net.minecraft.resources.ResourceLocation.fromNamespaceAndPath(com.november.mcphone.MCphone.MODID, "textures/gym/badge_" + idx + ".png");
+        int size = r * 2 + 2;
+        if (!on) g.setColor(0.55f, 0.55f, 0.6f, 0.45f);
+        try {
+            com.mojang.blaze3d.systems.RenderSystem.enableBlend();
+            GuiUtil.drawTexture(g, tex, cx - size / 2, cy - size / 2, size, size, 64, 64);
+        } finally { g.setColor(1f, 1f, 1f, 1f); }
+    }
+
     private static void medal(GuiGraphics g, Font font, int cx, int cy, int r, int color, boolean on, int num) {
         circle(g, cx, cy, r, on ? 0xFFFFFFFF : 0xFFD7D2DE);
         circle(g, cx, cy, r - 1, on ? color : 0xFFE8E4EE);
@@ -142,7 +163,7 @@ public final class GymPage {
                 if (i == nx) ChatUi.roundedFill(g, x, y, w, 22, GOLD);
                 ChatUi.glass(g, ChatGlass.Surface.CARD, x + (i == nx ? 1 : 0), y + (i == nx ? 1 : 0), w - (i == nx ? 2 : 0), 22 - (i == nx ? 2 : 0), hover);
                 int col = typeColor(gym.type());
-                medal(g, font, x + 11, y + 11, 7, col, open, i + 1);
+                badge(g, font, gym.type(), x + 11, y + 11, 8, col, gym.cleared(), i + 1);
                 ChatUi.label(g, font, ChatUi.truncate(font, gym.name(), w - 70, ChatLayout.TEXT_SCALE), x + 22, y + 7, ChatLayout.TEXT_SCALE,
                         open ? FontPalette.title() : FontPalette.subtle());
                 String meta = (gym.type().isEmpty() ? "" : gym.type() + " · ") + "Lv." + gym.cap();
@@ -163,9 +184,9 @@ public final class GymPage {
         int nx = next(gyms);
         int col = typeColor(gym.type());
         ChatUi.roundedFill(g, x, y, w, 36, col);
-        medal(g, font, x + 17, y + 18, 12, 0xFFFFFFFF, true, detail + 1);
-        circle(g, x + 17, y + 18, 11, 0xFFFFFFFF);
-        ChatUi.buttonText(g, font, String.valueOf(detail + 1), x + 17.5f, y + 18.5f, ChatLayout.TEXT_SCALE, col);
+        circle(g, x + 17, y + 18, 13, 0xFFFFFFFF);
+        if (badgeIndex(gym.type()) > 0) badge(g, font, gym.type(), x + 17, y + 18, 11, col, gym.cleared(), detail + 1);
+        else ChatUi.buttonText(g, font, String.valueOf(detail + 1), x + 17.5f, y + 18.5f, ChatLayout.TEXT_SCALE, col);
         ChatUi.label(g, font, ChatUi.truncate(font, Component.translatable("mcphone.gym.leader", gym.name()).getString(), w - 40, ChatLayout.TEXT_SCALE),
                 x + 34, y + 9, ChatLayout.TEXT_SCALE, 0xFFFFFFFF);
         String sub = (gym.type().isEmpty() ? "" : Component.translatable("mcphone.gym.type", gym.type()).getString() + " · ")
