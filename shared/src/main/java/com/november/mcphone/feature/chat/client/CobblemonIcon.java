@@ -4,7 +4,6 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
 import org.joml.Quaternionf;
-import org.joml.Vector3f;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
@@ -69,7 +68,7 @@ public final class CobblemonIcon {
             // 코블몬 파티 칸: 26칸 너비에 scale 10, 가운데(x+13), 위로 2
             float k = size / 26f;
             pose.translate(x + size / 2f, y - 2 * k, 0);
-            draw.invoke(null, rp, pose, new Quaternionf().fromEulerXYZDegrees(new Vector3f(13F, 35F, 0F)), profilePose, state,
+            draw.invoke(null, rp, pose, new Quaternionf().rotationXYZ((float) Math.toRadians(13), (float) Math.toRadians(35), 0f), profilePose, state,
                     partial, 10f * k, true, false, 1f, 1f, 1f, 1f, 0f, 0f);
             return true;
         } catch (Throwable t) {
