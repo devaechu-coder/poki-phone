@@ -26,6 +26,8 @@ public final class SnsWire {
     public static final int NAME_LENGTH = 32;
     public static final int PAGE_SIZE = 8;
     public static final int MAX_COMMENTS_SENT = 60;
+    /** 이로치 자랑 같은 카드 글 (SnsShiny.card 형식) */
+    public static final int MAX_CARD = 512;
 
     public enum Kind { FEED, DETAIL, POST, LIKE, COMMENT, DELETE_POST, DELETE_COMMENT, REPORT, BLOCK, UNBLOCK, MINE, BLOCKS }
 
@@ -48,8 +50,13 @@ public final class SnsWire {
 
     public record Post(UUID id, UUID author, String name, long time, String text,
                        UUID image, int width, int height, int likes, boolean liked,
-                       int commentCount, boolean mine, List<Comment> comments) {
+                       int commentCount, boolean mine, List<Comment> comments, String card) {
+        public Post { card = card == null ? "" : card; }
         public boolean hasImage() { return image != null && !image.equals(NONE); }
+        public boolean hasCard() { return !card.isEmpty(); }
+        public Post withComments(List<Comment> cs) {
+            return new Post(id, author, name, time, text, image, width, height, likes, liked, commentCount, mine, cs, card);
+        }
     }
 
     public record Reply(UUID request, Kind kind, Status status, int page, boolean more, List<Post> posts) {
@@ -90,6 +97,7 @@ public final class SnsWire {
                 b.writeUUID(c.id()); b.writeUUID(c.author()); b.writeUtf(c.name(), NAME_LENGTH * 4); b.writeLong(c.time());
                 b.writeUtf(c.text(), MAX_COMMENT * 4); b.writeBoolean(c.mine());
             }
+            b.writeUtf(p.card(), MAX_CARD);
         }
     }
 
@@ -111,7 +119,7 @@ public final class SnsWire {
             List<Comment> comments = new ArrayList<>(cn);
             for (int j = 0; j < cn; j++)
                 comments.add(new Comment(b.readUUID(), b.readUUID(), b.readUtf(NAME_LENGTH * 4), b.readLong(), b.readUtf(MAX_COMMENT * 4), b.readBoolean()));
-            posts.add(new Post(id, author, name, time, text, none(image) ? null : image, w, h, likes, liked, count, mine, comments));
+            posts.add(new Post(id, author, name, time, text, none(image) ? null : image, w, h, likes, liked, count, mine, comments, b.readUtf(MAX_CARD)));
         }
         return new Reply(request, kind, status, page, more, posts);
     }

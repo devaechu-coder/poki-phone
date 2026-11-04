@@ -446,5 +446,7 @@
   "mcphone.chat.poki_sticker": "[포키냥 이모티콘]",
   "mcphone.chat.poki_sticker_title": "포키냥 이모티콘",
   "key.mcphone.camera_shutter_poki": "사진 찍기",
-  "key.mcphone.camera_exit_poki": "카메라 나가기"
+  "key.mcphone.camera_exit_poki": "카메라 나가기",
+  "mcphone.sns.shiny_title": "이로치 발견!",
+  "mcphone.sns.shiny_iv": "개체값 %s/186 (%s%%)"
 }

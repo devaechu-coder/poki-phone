@@ -31,6 +31,8 @@ public final class SnsData extends PhoneSavedData {
     public static final class Post {
         public final UUID id, author; public final String name, text; public final long time;
         public UUID image; public int width, height;
+        /** 이로치 자랑 등 자동 카드 (비어 있으면 일반 글) */
+        public String card = "";
         public final Set<UUID> likes = new LinkedHashSet<>();
         public final Set<UUID> reports = new LinkedHashSet<>();
         public final List<Comment> comments = new ArrayList<>();
@@ -94,6 +96,7 @@ public final class SnsData extends PhoneSavedData {
             if (p.image != null) { t.putUUID("image", p.image); t.putInt("w", p.width); t.putInt("h", p.height); }
             t.put("likes", uuids(p.likes)); t.put("reports", uuids(p.reports));
             t.putBoolean("held", p.held);
+            if (!p.card.isEmpty()) t.putString("card", p.card);
             ListTag cs = new ListTag();
             for (Comment c : p.comments) {
                 CompoundTag ct = new CompoundTag();
@@ -122,6 +125,7 @@ public final class SnsData extends PhoneSavedData {
                 readUuids(t.getList("likes", Tag.TAG_STRING), p.likes);
                 readUuids(t.getList("reports", Tag.TAG_STRING), p.reports);
                 p.held = t.getBoolean("held");
+                p.card = t.getString("card");
                 for (Tag cr : t.getList("comments", Tag.TAG_COMPOUND)) {
                     CompoundTag ct = (CompoundTag) cr;
                     p.comments.add(new Comment(ct.getUUID("id"), ct.getUUID("author"), ct.getString("name"), ct.getLong("time"), ct.getString("text")));

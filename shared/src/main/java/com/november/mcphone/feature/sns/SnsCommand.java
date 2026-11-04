@@ -26,6 +26,8 @@ public final class SnsCommand {
         return Commands.literal(name).requires(s -> s.hasPermission(2))
                 .then(Commands.literal("sns")
                         .then(Commands.literal("검토함").executes(c -> list(c, true)))
+                        .then(Commands.literal("이로치테스트").then(Commands.argument("species", StringArgumentType.word()).executes(SnsCommand::shinyTest)))
+                        .then(Commands.literal("shinytest").then(Commands.argument("species", StringArgumentType.word()).executes(SnsCommand::shinyTest)))
                         .then(Commands.literal("review").executes(c -> list(c, true)))
                         .then(Commands.literal("목록").executes(c -> list(c, false)))
                         .then(Commands.literal("list").executes(c -> list(c, false)))
@@ -37,6 +39,18 @@ public final class SnsCommand {
                         .then(Commands.literal("mute").then(Commands.argument("player", GameProfileArgument.gameProfile()).executes(c -> mute(c, true))))
                         .then(Commands.literal("정지해제").then(Commands.argument("player", GameProfileArgument.gameProfile()).executes(c -> mute(c, false))))
                         .then(Commands.literal("unmute").then(Commands.argument("player", GameProfileArgument.gameProfile()).executes(c -> mute(c, false)))));
+    }
+
+    /** 이로치를 안 잡아도 자랑 카드가 어떻게 보이는지 확인 (영어 이름: charizard) */
+    private static int shinyTest(CommandContext<CommandSourceStack> c) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+        var p = c.getSource().getPlayerOrException();
+        String sp = StringArgumentType.getString(c, "species").toLowerCase(java.util.Locale.ROOT);
+        if (!sp.contains(":")) sp = "cobblemon:" + sp;
+        String biome = p.level().getBiome(p.blockPosition()).unwrapKey().map(k -> k.location().toString()).orElse("minecraft:plains");
+        String card = "species=" + sp + "|shiny=1|lv=36|nature=cobblemon:adamant|ability=blaze|gender=MALE|iv=158|ball=cobblemon:ultra_ball|biome=" + biome + "|test=1";
+        com.november.mcphone.feature.sns.net.SnsServer.autoPost(p, card);
+        say(c, "§a테스트 이로치 카드를 SNS 에 올렸어 (폰 SNS 에서 확인, 지우려면 글에서 삭제)");
+        return 1;
     }
 
     private static void say(CommandContext<CommandSourceStack> c, String s) {

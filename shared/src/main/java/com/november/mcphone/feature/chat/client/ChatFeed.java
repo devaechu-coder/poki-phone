@@ -10,6 +10,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.FormattedCharSequence;
 
 import java.nio.file.Path;
@@ -181,13 +182,11 @@ public final class ChatFeed {
     private void replace(SnsWire.Post p) {
         for (int i = 0; i < posts.size(); i++) if (posts.get(i).id().equals(p.id())) {
             // 피드 쪽엔 댓글 목록을 들고 있지 않는다
-            posts.set(i, new SnsWire.Post(p.id(), p.author(), p.name(), p.time(), p.text(), p.image(), p.width(), p.height(),
-                    p.likes(), p.liked(), p.commentCount(), p.mine(), List.of()));
+            posts.set(i, p.withComments(List.of()));
         }
         if (detail != null && detail.id().equals(p.id()))
             detail = p.comments().isEmpty() && !detail.comments().isEmpty() && p.commentCount() > 0
-                    ? new SnsWire.Post(p.id(), p.author(), p.name(), p.time(), p.text(), p.image(), p.width(), p.height(),
-                    p.likes(), p.liked(), p.commentCount(), p.mine(), detail.comments())
+                    ? p.withComments(detail.comments())
                     : p;
     }
 
@@ -256,8 +255,11 @@ public final class ChatFeed {
 
     // ── 그리기 ─────────────────────
 
+    private float partial;
+
     public void render(GuiGraphics g, int left, int top, int sw, int sh, int statusH, int navH, int mx, int my, Font font, float tick) {
         if (!opened) return;
+        partial = tick;
         poll();
         hits.clear();
         ChatImageCache.beginFrame(SnsWire.PEER);
@@ -317,6 +319,64 @@ public final class ChatFeed {
         int bw = w, bh = Math.max(8, bw * ph / pw);
         if (bh > maxH) { bh = maxH; bw = Math.max(8, bh * pw / ph); }
         return new int[]{bw, bh};
+    }
+
+    // ── 이로치 자랑 카드 ─────────────────────
+
+    private static final int CARD_H = 98, ICON = 40;
+    private static final int GOLD = 0xFFE8B323, GOLD_BG = 0xFFFFF6D6, GOLD_TEXT = 0xFFC8820A, PINK = 0xFFE2588F, CARD_INK = 0xFF2B2533, CARD_MUTE = 0xFF7A7286;
+
+    private static String trKey(String key, String fallback) {
+        return net.minecraft.client.resources.language.I18n.exists(key) ? Component.translatable(key).getString() : fallback;
+    }
+
+    private static String path(String id) { int i = id.indexOf(':'); return i < 0 ? id : id.substring(i + 1); }
+
+    private static String speciesName(String id) {
+        String p = path(id);
+        return trKey("cobblemon.species." + p + ".name", p.isEmpty() ? "?" : Character.toUpperCase(p.charAt(0)) + p.substring(1));
+    }
+
+    private void shinyCard(GuiGraphics g, Font font, String raw, int x, int y, int w) {
+        if (view != null && (y + CARD_H < view.y() || y > view.y() + view.height())) return;
+        var c = com.november.mcphone.feature.sns.SnsShiny.parse(raw);
+        String sp = c.getOrDefault("species", "");
+        ChatUi.roundedFill(g, x, y, w, CARD_H, GOLD);
+        ChatUi.roundedFill(g, x + 1, y + 1, w - 2, CARD_H - 2, GOLD_BG);
+        float cx = x + w / 2f;
+        ChatUi.buttonText(g, font, "★ " + tr("shiny_title") + " ★", cx, y + 7, ChatLayout.META_SCALE, GOLD_TEXT);
+        int ix = Math.round(cx - ICON / 2f), iy = y + 13;
+        g.fill(ix, iy, ix + ICON, iy + ICON, 0x40FFFFFF);
+        if (!CobblemonIcon.draw(g, sp, !"0".equals(c.get("shiny")), ix, iy, ICON, partial))
+            ChatUi.buttonText(g, font, ChatUi.truncate(font, speciesName(sp), ICON + 20, ChatLayout.TEXT_SCALE), cx, iy + ICON / 2f, ChatLayout.TEXT_SCALE, CARD_MUTE);
+        int ty = iy + ICON + 6;
+        String name = speciesName(sp) + (c.containsKey("lv") ? "  Lv." + c.get("lv") : "");
+        ChatUi.buttonText(g, font, ChatUi.truncate(font, name, w - 6, ChatLayout.TEXT_SCALE), cx, ty, ChatLayout.TEXT_SCALE, CARD_INK);
+        ty += 9;
+        StringBuilder info = new StringBuilder();
+        String gender = c.getOrDefault("gender", "");
+        if (gender.equals("MALE")) info.append("♂"); else if (gender.equals("FEMALE")) info.append("♀");
+        if (c.containsKey("nature")) { if (info.length() > 0) info.append(" · "); info.append(trKey("cobblemon.nature." + path(c.get("nature")), path(c.get("nature")))); }
+        if (c.containsKey("ability")) { if (info.length() > 0) info.append(" · "); info.append(trKey("cobblemon.ability." + path(c.get("ability")), path(c.get("ability")))); }
+        ChatUi.buttonText(g, font, ChatUi.truncate(font, info.toString(), w - 6, ChatLayout.META_SCALE), cx, ty, ChatLayout.META_SCALE, CARD_MUTE);
+        ty += 8;
+        if (c.containsKey("iv")) {
+            int iv = 0; try { iv = Integer.parseInt(c.get("iv")); } catch (NumberFormatException ignored) {}
+            ChatUi.buttonText(g, font, Component.translatable("mcphone.sns.shiny_iv", iv, Math.round(iv * 100f / 186)).getString(), cx, ty, ChatLayout.META_SCALE, PINK);
+            ty += 8;
+        }
+        StringBuilder where = new StringBuilder();
+        if (c.containsKey("ball")) {
+            var rl = ResourceLocation.tryParse(c.get("ball"));
+            if (rl != null && net.minecraft.core.registries.BuiltInRegistries.ITEM.containsKey(rl))
+                where.append(net.minecraft.core.registries.BuiltInRegistries.ITEM.get(rl).getDescription().getString());
+        }
+        if (c.containsKey("biome")) {
+            var rl = ResourceLocation.tryParse(c.get("biome"));
+            if (rl != null) { if (where.length() > 0) where.append(" · "); where.append(trKey("biome." + rl.getNamespace() + "." + rl.getPath(), rl.getPath())); }
+        }
+        if (where.length() > 0)
+            ChatUi.buttonText(g, font, ChatUi.truncate(font, where.toString(), w - 6, ChatLayout.META_SCALE), cx, ty, ChatLayout.META_SCALE, CARD_INK);
     }
 
     private void image(GuiGraphics g, Font font, UUID id, int x, int y, int w, int h) {
@@ -381,7 +441,8 @@ public final class ChatFeed {
             var lines = p.text().isEmpty() ? List.<FormattedCharSequence>of() : wrap(font, p.text(), w - PAD * 2, ChatLayout.TEXT_SCALE);
             int shown = Math.min(FEED_LINES, lines.size());
             int[] box = p.hasImage() ? fit(p, w - PAD * 2, 84) : null;
-            int h = PAD + 13 + shown * lh + (lines.size() > shown ? lh : 0) + (box != null ? box[1] + 3 : 0) + 11;
+            int cardH = p.hasCard() ? CARD_H + 3 : 0;
+            int h = PAD + 13 + shown * lh + (lines.size() > shown ? lh : 0) + (box != null ? box[1] + 3 : 0) + cardH + 11;
             var card = new ChatLayout.Rect(x, cy, w, h);
             if (cy + h >= y && cy <= y + viewH) {
                 hitIn(card, () -> openDetail(p));
@@ -396,6 +457,7 @@ public final class ChatFeed {
                 for (int i = 0; i < shown; i++) { ChatUi.text(g, font, lines.get(i), x + PAD, iy, ChatLayout.TEXT_SCALE, FontPalette.body()); iy += lh; }
                 if (lines.size() > shown) { ChatUi.text(g, font, tr("more_text"), x + PAD, iy, ChatLayout.META_SCALE, FontPalette.subtle()); iy += lh; }
                 if (box != null) { image(g, font, p.image(), x + (w - box[0]) / 2, iy, box[0], box[1]); iy += box[1] + 3; }
+                if (p.hasCard()) { shinyCard(g, font, p.card(), x + PAD, iy, w - PAD * 2); iy += cardH; }
                 // 아래줄: ♥ n   댓글 n
                 String heart = (p.liked() ? "♥ " : "♡ ") + p.likes();
                 var like = new ChatLayout.Rect(x + PAD - 1, iy - 1, ChatUi.width(font, heart, ChatLayout.META_SCALE) + 4, 10);
@@ -434,6 +496,7 @@ public final class ChatFeed {
         ChatUi.label(g, font, ago(p.time()), x + 17, cy + 10, ChatLayout.META_SCALE, FontPalette.timestamp());
         cy += 16;
         for (var line : wrap(font, p.text(), w - 4, ChatLayout.TEXT_SCALE)) { ChatUi.text(g, font, line, x + 2, cy, ChatLayout.TEXT_SCALE, FontPalette.body()); cy += lh; }
+        if (p.hasCard()) { cy += 2; shinyCard(g, font, p.card(), x, cy, w); cy += CARD_H + 2; }
         if (p.hasImage()) {
             int[] box = fit(p, w, 130);
             cy += 2;

@@ -110,7 +110,7 @@ public final class SnsServer {
                 List<SnsWire.Post> out = new ArrayList<>();
                 for (UUID id : data.blocked(me)) {
                     if (out.size() >= 60) break;
-                    out.add(new SnsWire.Post(id, id, nameOf(server, data, id), 0L, "", null, 0, 0, 0, false, 0, false, List.of()));
+                    out.add(new SnsWire.Post(id, id, nameOf(server, data, id), 0L, "", null, 0, 0, 0, false, 0, false, List.of(), ""));
                 }
                 yield new SnsWire.Reply(q.request(), q.kind(), SnsWire.Status.OK, 0, false, out);
             }
@@ -186,7 +186,7 @@ public final class SnsServer {
         }
         if (cs.size() > SnsWire.MAX_COMMENTS_SENT) cs = cs.subList(cs.size() - SnsWire.MAX_COMMENTS_SENT, cs.size());
         return new SnsWire.Post(p.id, p.author, nick(p.author, p.name), p.time, p.text, p.image, p.width, p.height,
-                p.likes.size(), p.likes.contains(me), count, p.author.equals(me) || staff, cs);
+                p.likes.size(), p.likes.contains(me), count, p.author.equals(me) || staff, cs, p.card);
     }
 
     // ── 글쓰기 ─────────────────────
@@ -246,6 +246,17 @@ public final class SnsServer {
         p.comments.add(new SnsData.Comment(UUID.randomUUID(), me, clean(player.getName().getString(), SnsWire.NAME_LENGTH), now, text));
         data.setDirty();
         return detail(q, player, data, SnsWire.Status.OK);
+    }
+
+    /** 포키: 이로치 자랑 같은 자동 글 (글자 없이 카드만). 정지된 사람은 안 올림 */
+    public static void autoPost(ServerPlayer player, String card) {
+        var server = player.level().getServer();
+        var data = SnsData.get(server);
+        if (data.muted(player.getUUID())) return;
+        var p = new SnsData.Post(UUID.randomUUID(), player.getUUID(), clean(player.getName().getString(), SnsWire.NAME_LENGTH),
+                System.currentTimeMillis(), "");
+        p.card = card;
+        data.add(p);
     }
 
     // ── 사진 업로드 (ChatNetworking 에서 불림) ─────────────────────
