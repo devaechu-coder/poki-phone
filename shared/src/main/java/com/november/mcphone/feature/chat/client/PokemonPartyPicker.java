@@ -37,14 +37,25 @@ public final class PokemonPartyPicker {
         try {
             Class<?> cc = Class.forName("com.cobblemon.mod.common.client.CobblemonClient");
             Object client = cc.getField("INSTANCE").get(null);
-            Object party = get(get(client, "storage"), "myParty");
+            Object party = get(get(client, "storage"), "party");
             if (party == null) return out;
             // 코블몬 ClientParty: slots(빈칸 포함 목록)가 있으면 그 순서가 서버 파티 칸 번호와 같음
             List<?> slots = null;
             Object raw = get(party, "slots");
             if (raw instanceof List<?> l) slots = l;
             else if (party instanceof Iterable<?> it) { var l = new ArrayList<Object>(); for (Object o : it) l.add(o); slots = l; }
-            if (slots == null) return out;
+            if (slots == null) {
+                try {
+                    Method g = party.getClass().getMethod("get", int.class);
+                    var l = new ArrayList<Object>();
+                    for (int i = 0; i < 6; i++) l.add(g.invoke(party, i));
+                    slots = l;
+                } catch (Throwable ignored) {}
+            }
+            if (slots == null) {
+                com.november.mcphone.MCphone.LOGGER.warn("[포키폰] 파티를 못 읽음: {}", party.getClass().getName());
+                return out;
+            }
             for (int i = 0; i < Math.min(6, slots.size()); i++) {
                 Object pk = slots.get(i);
                 if (pk == null) continue;
@@ -57,7 +68,7 @@ public final class PokemonPartyPicker {
                 out.add(new Slot(i, id.toString(), Boolean.TRUE.equals(get(pk, "shiny")), name + (lv != null ? "  Lv." + lv : "")));
             }
         } catch (Throwable t) {
-            // 코블몬이 없거나 이름이 바뀜 → 빈 목록
+            com.november.mcphone.MCphone.LOGGER.warn("[포키폰] 파티 읽기 실패: {}", t.toString());
         }
         return out;
     }
