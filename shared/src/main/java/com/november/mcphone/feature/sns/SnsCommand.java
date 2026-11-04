@@ -26,8 +26,6 @@ public final class SnsCommand {
         return Commands.literal(name).requires(s -> s.hasPermission(2))
                 .then(Commands.literal("sns")
                         .then(Commands.literal("검토함").executes(c -> list(c, true)))
-                        .then(Commands.literal("이로치테스트").then(Commands.argument("species", StringArgumentType.word()).executes(SnsCommand::shinyTest)))
-                        .then(Commands.literal("shinytest").then(Commands.argument("species", StringArgumentType.word()).executes(SnsCommand::shinyTest)))
                         .then(Commands.literal("review").executes(c -> list(c, true)))
                         .then(Commands.literal("목록").executes(c -> list(c, false)))
                         .then(Commands.literal("list").executes(c -> list(c, false)))

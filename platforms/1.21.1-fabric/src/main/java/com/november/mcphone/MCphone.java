@@ -65,7 +65,8 @@ public class MCphone implements ModInitializer {
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             com.november.mcphone.feature.chat.ChatImageStore.onServerStarted(server);
             com.november.mcphone.core.ServerConfig.load(server);
-            com.november.mcphone.feature.sns.SnsShiny.install();
+            // 포키: 이로치 SNS 자동 자랑은 뺌 (다시 켜려면 아래 줄 살리기)
+            // com.november.mcphone.feature.sns.SnsShiny.install();
             com.november.mcphone.core.script.server.economy.EconomyRuntime.start(server);
             com.november.mcphone.core.script.server.ScriptWorkers.start();
             // 脚本宿主（S15g）：建 StrikeTracker（必须主线程）、管线、登记进 ScriptRpcHandler
