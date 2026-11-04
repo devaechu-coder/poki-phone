@@ -46,6 +46,8 @@ public final class ChatConversation {
     private long lastRequestMs;
     private List<ChatMessage> markedFrom;
     private boolean backHovered, pendingBack, moreHovered, pendingDetails, profileSuspended;
+    /** 포키 통화: 머리줄 ☎ 버튼, 그룹방 "통화 중" 띠 */
+    private boolean callHovered, joinHovered;
 
     public void open(UUID peer) {
         open(ChatConversationChannel.direct(peer));
@@ -173,6 +175,12 @@ public final class ChatConversation {
         }
         if (button == 0 && backHovered) { pendingBack = true; return true; }
         if (button == 0 && moreHovered) { pendingDetails = true; return true; }
+        if (button == 0 && callHovered && peer != null) { CallClient.call(peer, channel.group()); return true; }
+        if (button == 0 && joinHovered && peer != null) {
+            var gc = CallClient.GROUP_CALLS.get(peer);
+            if (gc != null) CallClient.join(gc.call());
+            return true;
+        }
         if (composer.mouseClicked(button)) { messages.clearSelection(); return true; }
         UUID image = button == 0 ? messages.imageAt(mx, my) : null;
         if (image != null) {
@@ -313,13 +321,29 @@ public final class ChatConversation {
         ChatUi.sizedIcon(g, ChatUi.Icon.MORE, x + w - 12 + (12 - ChatLayout.ICON_SIZE) / 2f,
                 y + (ChatLayout.HEADER_HEIGHT - ChatLayout.ICON_SIZE) / 2f, ChatLayout.ICON_SIZE,
                 moreHovered ? ChatUi.accent() : FontPalette.body());
+        callHovered = !CallClient.inCall() && GuiUtil.hit(mx, my, x + w - 25, y, 12, ChatLayout.HEADER_HEIGHT);
+        ChatUi.buttonText(g, font, "☎", x + w - 19, y + ChatLayout.HEADER_HEIGHT / 2f, ChatLayout.TEXT_SCALE,
+                CallClient.inCall() ? FontPalette.dim() : callHovered ? ChatUi.accent() : FontPalette.body());
         String suffix = channel.titleSuffix();
-        String name = ChatUi.truncate(font, channel.title(), w - 30 - ChatUi.width(font, suffix, ChatLayout.TEXT_SCALE), ChatLayout.TEXT_SCALE) + suffix;
+        String name = ChatUi.truncate(font, channel.title(), w - 52 - ChatUi.width(font, suffix, ChatLayout.TEXT_SCALE), ChatLayout.TEXT_SCALE) + suffix;
         ChatUi.buttonText(g, font, name, x + w / 2f,
                 y + ChatLayout.HEADER_HEIGHT / 2f,
                 ChatLayout.TEXT_SCALE, FontPalette.title());
         y += ChatLayout.HEADER_HEIGHT;
         g.fill(x, y, x + w, y + 1, PhoneTheme.COLOR_DIVIDER);
+        joinHovered = false;
+        var gc = channel.group() ? CallClient.GROUP_CALLS.get(peer) : null;
+        if (gc != null && !CallClient.inCall()) {
+            int by = y + 2;
+            ChatUi.roundedFill(g, x, by, w, 11, 0xFF3FA75A);
+            joinHovered = GuiUtil.hit(mx, my, x, by, w, 11);
+            String label = Component.translatable("mcphone.call.group_banner", gc.count()).getString();
+            ChatUi.label(g, font, ChatUi.truncate(font, "☎ " + label, w - 30, ChatLayout.META_SCALE), x + 4, by + 5.5f, ChatLayout.META_SCALE, 0xFFFFFFFF);
+            String join = Component.translatable("mcphone.call.join").getString();
+            int jw = ChatUi.width(font, join, ChatLayout.META_SCALE);
+            ChatUi.label(g, font, join, x + w - jw - 4, by + 5.5f, ChatLayout.META_SCALE, joinHovered ? 0xFFFFFFAA : 0xFFFFFFFF);
+            y += 13;
+        }
         return y + ChatLayout.SECTION_GAP;
     }
 

@@ -59,6 +59,12 @@ repositories {
             includeGroup "de.mari_023"
         }
     }
+    // 포키: Simple Voice Chat API (통화). 컴파일할 때만 씀
+    maven {
+        name = "henkelmax"
+        url = "https://maven.maxhenkel.de/repository/public"
+        content { includeGroup "de.maxhenkel.voicechat" }
+    }
     mavenCentral()
 }
 
@@ -83,6 +89,8 @@ dependencies {
     mappings loom.officialMojangMappings()
     modImplementation "net.fabricmc:fabric-loader:${loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_version}"
+    // 포키 통화: 음성채팅 API (없으면 통화만 꺼짐)
+    compileOnly "de.maxhenkel.voicechat:voicechat-api:2.5.0"
 
     // JavaMP3 —— MP3 解码，【必需】依赖，不是可选联动。
     // include（fabric-loader 的 jar-in-jar）而不是 implementation：只写

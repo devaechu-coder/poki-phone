@@ -67,7 +67,7 @@ import java.util.UUID;
 /** 手机主屏幕 GUI：管理各页面之间的导航（{@link Mode}）、分发输入、兜住附属页面的异常 */
 public final class PhoneScreen extends PhoneScreenBase {
 
-    public enum Mode { MAIN, SETTINGS, WALLPAPER_PICKER, FONT_COLOR_PICKER, UI_SCALE, HUD, APP_MANAGER, APP_MANAGER_DETAIL, MUSIC_PLAYER, APP_STORE, APP_DETAIL, COMPANION_APPS, ADDON_PAGE, ABOUT, CHANGELOG, GALLERY, DEVICE_NAME, CHAT, CHAT_PROFILE, CHAT_PLAYER_PROFILE, CHAT_CONTACTS, CHAT_NEW_FRIENDS, CHAT_ADD_CONTACT, CHAT_CONVERSATION, CHAT_GROUP_CONVERSATION, CHAT_GROUP_CREATE, CHAT_GROUP_DETAILS, CHAT_PHOTO_PICKER, CHAT_STICKER_PICKER, CHAT_FEED, CHAT_FEED_PHOTO_PICKER, GYM, CHAT_POKEMON_PICKER, NOTES, NOTE_EDIT, CLOCK, WEATHER, READER, TXT_BOOK, VAULT, AUTHOR_KEY }
+    public enum Mode { MAIN, SETTINGS, WALLPAPER_PICKER, FONT_COLOR_PICKER, UI_SCALE, HUD, APP_MANAGER, APP_MANAGER_DETAIL, MUSIC_PLAYER, APP_STORE, APP_DETAIL, COMPANION_APPS, ADDON_PAGE, ABOUT, CHANGELOG, GALLERY, DEVICE_NAME, CHAT, CHAT_PROFILE, CHAT_PLAYER_PROFILE, CHAT_CONTACTS, CHAT_NEW_FRIENDS, CHAT_ADD_CONTACT, CHAT_CONVERSATION, CHAT_GROUP_CONVERSATION, CHAT_GROUP_CREATE, CHAT_GROUP_DETAILS, CHAT_PHOTO_PICKER, CHAT_STICKER_PICKER, CHAT_FEED, CHAT_FEED_PHOTO_PICKER, GYM, CHAT_POKEMON_PICKER, CALL, NOTES, NOTE_EDIT, CLOCK, WEATHER, READER, TXT_BOOK, VAULT, AUTHOR_KEY }
 
     private final long openTimeMs;
     private boolean animationDone;
@@ -151,6 +151,9 @@ public final class PhoneScreen extends PhoneScreenBase {
     private final ChatMediaPicker chatFeedPicker = new ChatMediaPicker(
             PhotoLibrary.folder(), "mcphone.sns.pick_photo", "mcphone.chat.pick_photo_empty", false);
 
+    /** 포키 통화: 통화 화면에서 돌아갈 곳, 화면 위 통화 표시 */
+    private Mode callReturnMode = Mode.MAIN;
+    private com.november.mcphone.feature.chat.client.ChatLayout.Rect callPill;
     /** 포키: 포켓몬 카드로 보낼 파티 포켓몬 고르기 */
     private final com.november.mcphone.feature.chat.client.PokemonPartyPicker chatPokemonPicker =
             new com.november.mcphone.feature.chat.client.PokemonPartyPicker();
@@ -352,6 +355,7 @@ public final class PhoneScreen extends PhoneScreenBase {
         if (target == Mode.CHAT_FEED) chatFeed.open();
         if (this.mode == Mode.GYM && target != Mode.GYM) com.november.mcphone.feature.chat.client.GymPage.close();
         if (target == Mode.GYM) com.november.mcphone.feature.chat.client.GymPage.open();
+        if (target == Mode.CALL && this.mode != Mode.CALL) callReturnMode = this.mode;
 
         if (target == Mode.WALLPAPER_PICKER) {
             WallpaperStore.refresh();
@@ -750,6 +754,7 @@ public final class PhoneScreen extends PhoneScreenBase {
         if (inConversation() && chatConversation.dismissViewer()) return true;
 
         if (mode == Mode.CHAT_FEED_PHOTO_PICKER) { navigateTo(Mode.CHAT_FEED); return true; }
+        if (mode == Mode.CALL) { navigateTo(callReturnMode); return true; }
         if (mode == Mode.GYM) { if (!com.november.mcphone.feature.chat.client.GymPage.back()) navigateTo(Mode.MAIN); return true; }
         if (mode == Mode.CHAT_FEED) { if (!chatFeed.back()) navigateTo(Mode.CHAT); return true; }
         // 选照片、选表情都是从某个会话点进来的，返回自然回那个会话
@@ -1053,6 +1058,10 @@ public final class PhoneScreen extends PhoneScreenBase {
                     tellPlayer("mcphone.chat.group.removed"); navigateTo(chatReturnMode);
                 } else chatConversation.render(g, phoneLeft, phoneTop, sw, sh, statusH, navH, mouseX, mouseY, partialTick, font);
             }
+            case CALL -> {
+                if (!com.november.mcphone.feature.chat.client.CallPage.visible()) navigateTo(callReturnMode);
+                else com.november.mcphone.feature.chat.client.CallPage.render(g, phoneLeft, phoneTop, sw, sh, statusH, navH, mouseX, mouseY, font);
+            }
             case GYM -> com.november.mcphone.feature.chat.client.GymPage.render(g, phoneLeft, phoneTop, sw, sh, statusH, navH, mouseX, mouseY, font);
             case CHAT_FEED -> chatFeed.render(g, phoneLeft, phoneTop, sw, sh, statusH, navH, mouseX, mouseY, font, partialTick);
             case CHAT_FEED_PHOTO_PICKER -> chatFeedPicker.render(g, phoneLeft, phoneTop,
@@ -1080,6 +1089,19 @@ public final class PhoneScreen extends PhoneScreenBase {
             case NOTE_EDIT         -> noteEditor.render(g, phoneLeft, phoneTop,
                     sw, sh, statusH, navH,
                     mouseX, mouseY, partialTick, font);
+        }
+
+        // 포키 통화: 전화가 오거나 걸면 통화 화면으로, 통화 중엔 화면 위에 작은 표시
+        if (com.november.mcphone.feature.chat.client.CallClient.consumeShow() && mode != Mode.CALL && com.november.mcphone.feature.chat.client.CallPage.visible()) navigateTo(Mode.CALL);
+        callPill = null;
+        if (mode != Mode.CALL && (com.november.mcphone.feature.chat.client.CallClient.inCall() || com.november.mcphone.feature.chat.client.CallClient.ringing())) {
+            String pill = "☎ " + (com.november.mcphone.feature.chat.client.CallClient.ringing() && !com.november.mcphone.feature.chat.client.CallClient.inCall()
+                    ? Component.translatable("mcphone.call.pill_incoming").getString()
+                    : com.november.mcphone.feature.chat.client.CallPage.timer(com.november.mcphone.feature.chat.client.CallClient.activeStarted()));
+            int pw = font.width(pill) + 8, px = phoneLeft + (sw - pw) / 2, py = phoneTop + statusH + 1;
+            com.november.mcphone.feature.chat.client.ChatUi.roundedFill(g, px, py, pw, 11, 0xFF3FA75A);
+            g.drawString(font, pill, px + 4, py + 2, 0xFFFFFFFF, false);
+            callPill = new com.november.mcphone.feature.chat.client.ChatLayout.Rect(px, py, pw, 11);
         }
 
         renderNavBar(g, mouseX, mouseY);
@@ -1347,6 +1369,7 @@ public final class PhoneScreen extends PhoneScreenBase {
             case NONE -> { }
         }
 
+        if (callPill != null && button == 0 && callPill.contains(mx, my)) { navigateTo(Mode.CALL); return true; }
         return switch (mode) {
             case CHANGELOG -> { changelogPage.mouseClicked(mx, my, button); yield true; }
             case MAIN -> {
@@ -1542,6 +1565,10 @@ public final class PhoneScreen extends PhoneScreenBase {
                         }
                     }
                 }
+                yield true;
+            }
+            case CALL -> {
+                com.november.mcphone.feature.chat.client.CallPage.mouseClicked(mx, my, button);
                 yield true;
             }
             case GYM -> {

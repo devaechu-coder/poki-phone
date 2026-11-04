@@ -20,6 +20,9 @@
     ],
     "client": [
       "com.november.mcphone.MCphoneClient"
+    ],
+    "voicechat": [
+      "com.november.mcphone.feature.call.PokiVoicePlugin"
     ]
   },
   "mixins": [

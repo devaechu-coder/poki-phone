@@ -57,6 +57,7 @@ public class MCphone implements ModInitializer {
             com.november.mcphone.feature.music.DiscService.onPlayerLoggedOut(id);
             com.november.mcphone.feature.chat.ChatImageUploads.onPlayerLoggedOut(id);
             com.november.mcphone.feature.sns.net.SnsServer.onLogout(id);
+            com.november.mcphone.feature.call.CallService.onLogout(id);
         });
 
         // 开服时清掉没有消息认领的图片文件（理由见 ChatImageStore.sweepOrphans）
@@ -97,6 +98,7 @@ public class MCphone implements ModInitializer {
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             // 超时托管每 5 分钟扫一次（见 EconomyRuntime.tick）
             com.november.mcphone.core.script.server.economy.EconomyRuntime.tick();
+            if (server.getTickCount() % 20 == 0) com.november.mcphone.feature.call.CallService.tick(server);
             for (ServerPlayer player : server.getPlayerList().getPlayers()) {
                 com.november.mcphone.feature.terminal.TerminalCharger.onPlayerTick(player);
             }

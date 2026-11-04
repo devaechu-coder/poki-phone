@@ -13,6 +13,7 @@ public final class ChatClientLifecycle {
         GroupTransport.clear();
         ChatClientCache.clear(); // 同时清理纯数据的群缓存。
         ProfileClientCache.clear();
+        CallClient.clear();
         com.november.mcphone.feature.sns.client.SnsClientCache.clear();
         ChatFavorites.clear();
         ChatImageCache.clear();
