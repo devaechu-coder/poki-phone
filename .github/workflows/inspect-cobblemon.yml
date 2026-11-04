@@ -1,5 +1,7 @@
 name: 코블몬 API 살펴보기 (임시)
-on: workflow_dispatch
+on:
+  push:
+    paths: [".github/workflows/inspect-cobblemon.yml"]
 jobs:
   inspect:
     runs-on: ubuntu-latest
