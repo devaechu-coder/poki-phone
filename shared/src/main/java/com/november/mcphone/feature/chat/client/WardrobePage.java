@@ -264,7 +264,7 @@ public final class WardrobePage {
     /** 아이템 모델을 크게 빙글빙글. GuiGraphics.renderItem 과 같은 순서에 Y 회전만 더함 */
     /** 모델 크기·중심 (GUI 변환 뒤 공간). 모델마다 한 번만 셈 */
     private record Fit(float cx, float cy, float cz, float rxz, float hy) {}
-    private static final java.util.Map<Object, Fit> FITS = new java.util.IdentityHashMap<>();
+    private static final java.util.Map<net.minecraft.client.resources.model.BakedModel, Fit> FITS = new java.util.IdentityHashMap<>();
 
     private static Fit fitOf(net.minecraft.client.resources.model.BakedModel model) {
         return FITS.computeIfAbsent(model, m -> {
