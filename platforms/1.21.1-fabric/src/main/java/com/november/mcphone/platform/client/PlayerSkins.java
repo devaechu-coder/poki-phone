@@ -55,6 +55,21 @@ public final class PlayerSkins {
         }
     }
 
+    /** 포키: 이번 접속에서 한 번도 못 본 오프라인 상대는 모장 프로필로 스킨을 받아 옴 (UUID 당 한 번만) */
+    private static final java.util.Set<UUID> FETCHING = new java.util.HashSet<>();
+
+    private static void fetch(Minecraft mc, UUID player) {
+        if (!FETCHING.add(player)) return;
+        try {
+            net.minecraft.world.level.block.entity.SkullBlockEntity.fetchGameProfile(player).thenAccept(opt -> opt.ifPresent(profile ->
+                    mc.execute(() -> mc.getSkinManager().getOrLoad(profile).thenAccept(skin -> {
+                        if (skin != null) mc.execute(() -> { if (!MEMORY.has(player)) MEMORY.remember(player, skin::texture); });
+                    }))));
+        } catch (RuntimeException ignored) {
+            // 못 받으면 기본 스킨 그대로
+        }
+    }
+
     /** 在线优先更新，好友下线后继续使用最近加载成功的皮肤。 */
     public static ResourceLocation faceTexture(UUID player) {
         Minecraft mc = Minecraft.getInstance();
@@ -62,6 +77,7 @@ public final class PlayerSkins {
         if (mc.getConnection() != null) {
             PlayerInfo info = mc.getConnection().getPlayerInfo(player);
             if (info != null) MEMORY.remember(player, () -> textureOf(info));
+            else if (!MEMORY.has(player)) fetch(mc, player);
         }
         return MEMORY.resolve(player, DefaultPlayerSkin.get(player).texture());
     }

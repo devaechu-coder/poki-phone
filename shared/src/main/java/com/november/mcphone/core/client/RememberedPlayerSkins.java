@@ -41,6 +41,9 @@ public final class RememberedPlayerSkins<T> {
         return true;
     }
 
+    /** 이 플레이어 스킨을 이미 알고 있거나 받을 곳이 있는지 */
+    public boolean has(UUID player) { return entries.containsKey(player); }
+
     public void remember(UUID player, Supplier<T> skin) {
         Objects.requireNonNull(player);
         Objects.requireNonNull(skin);
