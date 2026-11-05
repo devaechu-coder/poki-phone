@@ -48,7 +48,7 @@ public final class WardrobePage {
     private static String tr(String k) { return Component.translatable("mcphone.wardrobe." + k).getString(); }
 
     public static void open() {
-        detail = -1; scroll = 0; angle = 0;
+        detail = -1; scroll = 0; angle = 0; FITS.clear();
         load();
     }
 
@@ -182,7 +182,7 @@ public final class WardrobePage {
         GuiUtil.enableScissor(g, x, y, x + w, y + boxH);
         try {
             if (wearing) wear(g, stack, slot, x + w / 2f, y + boxH * 0.52f, boxH * 0.36f);
-            else spin(g, stack, x + w / 2f, y + boxH * 0.42f, boxH * 0.8f);
+            else spin(g, stack, x + w / 2f, y + (boxH - 10) / 2f, w, boxH - 10);
         } finally { GuiUtil.disableScissor(g); }
         if (wearing) ChatUi.label(g, font, tr("fitting"), x + 4, y + 6, ChatLayout.META_SCALE, ChatUi.accent());
         ChatUi.buttonText(g, font, tr("drag"), x + w / 2f, y + boxH - 5, ChatLayout.META_SCALE, FontPalette.subtle());
@@ -262,16 +262,58 @@ public final class WardrobePage {
     }
 
     /** 아이템 모델을 크게 빙글빙글. GuiGraphics.renderItem 과 같은 순서에 Y 회전만 더함 */
-    private static void spin(GuiGraphics g, ItemStack stack, float cx, float cy, float size) {
+    /** 모델 크기·중심 (GUI 변환 뒤 공간). 모델마다 한 번만 셈 */
+    private record Fit(float cx, float cy, float cz, float rxz, float hy) {}
+    private static final java.util.Map<Object, Fit> FITS = new java.util.IdentityHashMap<>();
+
+    private static Fit fitOf(net.minecraft.client.resources.model.BakedModel model) {
+        return FITS.computeIfAbsent(model, m -> {
+            float[] lo = {Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE}, hi = {-Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE};
+            var rnd = net.minecraft.util.RandomSource.create(42);
+            java.util.List<net.minecraft.client.renderer.block.model.BakedQuad> quads = new ArrayList<>(m.getQuads(null, null, rnd));
+            for (var d : net.minecraft.core.Direction.values()) quads.addAll(m.getQuads(null, d, rnd));
+            var t = m.getTransforms().getTransform(ItemDisplayContext.GUI);
+            var mat = new org.joml.Matrix4f().translate(t.translation)
+                    .rotate(new org.joml.Quaternionf().rotationXYZ((float) Math.toRadians(t.rotation.x()), (float) Math.toRadians(t.rotation.y()), (float) Math.toRadians(t.rotation.z())))
+                    .scale(t.scale).translate(-0.5f, -0.5f, -0.5f);
+            var v = new org.joml.Vector3f();
+            for (var q : quads) {
+                int[] vs = q.getVertices();
+                int st = vs.length / 4;
+                for (int i = 0; i + 2 < vs.length; i += st) {
+                    v.set(Float.intBitsToFloat(vs[i]), Float.intBitsToFloat(vs[i + 1]), Float.intBitsToFloat(vs[i + 2]));
+                    mat.transformPosition(v);
+                    lo[0] = Math.min(lo[0], v.x); lo[1] = Math.min(lo[1], v.y); lo[2] = Math.min(lo[2], v.z);
+                    hi[0] = Math.max(hi[0], v.x); hi[1] = Math.max(hi[1], v.y); hi[2] = Math.max(hi[2], v.z);
+                }
+            }
+            if (lo[0] > hi[0]) return new Fit(0, 0, 0, 0.5f, 0.5f);
+            float cx = (lo[0] + hi[0]) / 2, cy = (lo[1] + hi[1]) / 2, cz = (lo[2] + hi[2]) / 2;
+            float hx = (hi[0] - lo[0]) / 2, hz = (hi[2] - lo[2]) / 2;
+            return new Fit(cx, cy, cz, Math.max(0.05f, (float) Math.sqrt(hx * hx + hz * hz)), Math.max(0.05f, (hi[1] - lo[1]) / 2));
+        });
+    }
+
+    /**
+     * 아이템 모델을 크게 빙글빙글. GuiGraphics.renderItem 과 같은 순서에 Y 회전만 더함.
+     * 작은 장식(볼 패치 등)은 모델 한가운데가 아니라 한쪽에 붙어 있어서, 실제 모양의 중심을 축으로 돌리고
+     * 크기도 상자에 맞게 키운다.
+     */
+    private static void spin(GuiGraphics g, ItemStack stack, float cx, float cy, int boxW, int boxH) {
         if (!GuiUtil.canDrawItemIcon(stack)) return;
         Minecraft mc = Minecraft.getInstance();
         var model = mc.getItemRenderer().getModel(stack, mc.level, mc.player, 0);
+        Fit f;
+        try { f = fitOf(model); } catch (RuntimeException e) { f = new Fit(0, 0, 0, 0.5f, 0.5f); }
+        float size = Math.min(boxW * 0.42f / f.rxz(), boxH * 0.42f / f.hy());
+        size = Math.min(size, boxH * 1.6f);
         var pose = g.pose();
         pose.pushPose();
         try {
             pose.translate(cx, cy, 150);
             pose.scale(size, -size, size);
             pose.mulPose(Axis.YP.rotationDegrees(angle));
+            pose.translate(-f.cx(), -f.cy(), -f.cz());
             boolean flat = !model.usesBlockLight();
             if (flat) Lighting.setupForFlatItems();
             mc.getItemRenderer().render(stack, ItemDisplayContext.GUI, false, pose, g.bufferSource(), 0xF000F0, OverlayTexture.NO_OVERLAY, model);
