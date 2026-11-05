@@ -39,6 +39,8 @@ public final class WardrobePage {
     private static double scroll;
     private static int contentH, viewH;
     private static float angle;
+    /** true 면 내 캐릭터에 씌워서 보기 (응원봉은 아이템만) */
+    private static boolean tryOn = true;
     private static long lastFrame, lastDrag;
     private record Hit(ChatLayout.Rect r, Runnable run) {}
     private static final List<Hit> HITS = new ArrayList<>();
@@ -156,15 +158,33 @@ public final class WardrobePage {
     }
 
     private static void detail(GuiGraphics g, Font font, List<ItemStack> items, int x, int y, int w, int bottom, int mx, int my) {
-        int boxH = Math.max(40, Math.min(w, bottom - y - 34));
+        ItemStack stack = items.get(detail);
+        String slot = slotOf(stack);
+        boolean canTry = slot != null;
+        // 아이템만 / 입어보기
+        if (canTry) {
+            int hw = w / 2;
+            var a = new ChatLayout.Rect(x, y, hw - 1, 11);
+            var b = new ChatLayout.Rect(x + hw, y, w - hw, 11);
+            seg(g, font, a, tr("item_only"), !tryOn, mx, my);
+            seg(g, font, b, tr("try_on"), tryOn, mx, my);
+            HITS.add(new Hit(a, () -> tryOn = false));
+            HITS.add(new Hit(b, () -> tryOn = true));
+            y += 14;
+        }
+        int boxH = Math.max(40, Math.min(w + 10, bottom - y - 34));
         ChatUi.glass(g, ChatGlass.Surface.CARD, x, y, w, boxH, false);
 
         long now = System.currentTimeMillis();
         if (lastFrame != 0 && now - lastDrag > 1500) angle += (now - lastFrame) * 0.045f;
         lastFrame = now;
+        boolean wearing = canTry && tryOn;
         GuiUtil.enableScissor(g, x, y, x + w, y + boxH);
-        try { spin(g, items.get(detail), x + w / 2f, y + boxH / 2f, boxH * 0.72f); }
-        finally { GuiUtil.disableScissor(g); }
+        try {
+            if (wearing) wear(g, stack, slot, x + w / 2f, y + boxH * 0.52f, boxH * 0.36f);
+            else spin(g, stack, x + w / 2f, y + boxH * 0.42f, boxH * 0.8f);
+        } finally { GuiUtil.disableScissor(g); }
+        if (wearing) ChatUi.label(g, font, tr("fitting"), x + 4, y + 6, ChatLayout.META_SCALE, ChatUi.accent());
         ChatUi.buttonText(g, font, tr("drag"), x + w / 2f, y + boxH - 5, ChatLayout.META_SCALE, FontPalette.subtle());
         y += boxH + 4;
 
@@ -180,6 +200,65 @@ public final class WardrobePage {
         ChatUi.buttonText(g, font, "▶", x + w - 10, y + 6, ChatLayout.TEXT_SCALE, next.contains(mx, my) ? ChatUi.accent() : FontPalette.body());
         HITS.add(new Hit(prev, () -> { detail = (detail - 1 + n) % n; angle = 0; }));
         HITS.add(new Hit(next, () -> { detail = (detail + 1) % n; angle = 0; }));
+    }
+
+    private static void seg(GuiGraphics g, Font font, ChatLayout.Rect r, String text, boolean on, int mx, int my) {
+        if (on) ChatUi.roundedFill(g, r.x(), r.y(), r.width(), r.height(), ChatUi.accent());
+        else ChatUi.glass(g, ChatGlass.Surface.CARD, r.x(), r.y(), r.width(), r.height(), r.contains(mx, my));
+        ChatUi.buttonText(g, font, text, r.x() + r.width() / 2f, r.y() + r.height() / 2f, ChatLayout.META_SCALE, on ? 0xFFFFFFFF : FontPalette.body());
+    }
+
+    /** 이 치장이 들어가는 Accessories 칸 이름 (응원봉 같은 손 아이템은 null) */
+    private static String slotOf(ItemStack stack) {
+        String path = BuiltInRegistries.ITEM.getKey(stack.getItem()).getPath();
+        return switch (path) { case "hat", "face", "back", "tail", "outfit" -> path; default -> null; };
+    }
+
+    /**
+     * 내 캐릭터를 그리면서 그 칸의 "치장" 자리에 이 아이템을 잠깐 넣었다가 바로 뺀다.
+     * 클라이언트 화면에만 그리는 거라 서버·다른 사람한테는 아무 일 없음.
+     * Accessories 는 컴파일 의존이 없어서 이름으로 찾아 부름.
+     */
+    private static void wear(GuiGraphics g, ItemStack stack, String slot, float cx, float cy, float scale) {
+        Minecraft mc = Minecraft.getInstance();
+        var player = mc.player;
+        if (player == null) return;
+        net.minecraft.world.Container box = cosmeticBox(player, slot);
+        ItemStack old = null;
+        float bodyRot = player.yBodyRot, yRot = player.getYRot(), xRot = player.getXRot(), headO = player.yHeadRotO, head = player.yHeadRot;
+        try {
+            if (box != null && box.getContainerSize() > 0) { old = box.getItem(0); box.setItem(0, stack.copy()); }
+            float face = 180f + angle;
+            player.yBodyRot = face; player.setYRot(face); player.setXRot(0); player.yHeadRot = face; player.yHeadRotO = face;
+            var pose = new org.joml.Quaternionf().rotateZ((float) Math.PI);
+            var cam = new org.joml.Quaternionf().rotateX((float) Math.toRadians(-8));
+            pose.mul(cam);
+            float s = player.getScale();
+            var off = new org.joml.Vector3f(0, player.getBbHeight() / 2f + 0.0625f * s, 0);
+            net.minecraft.client.gui.screens.inventory.InventoryScreen.renderEntityInInventory(g, cx, cy, scale / s, off, pose, cam, player);
+        } catch (RuntimeException e) {
+            com.november.mcphone.MCphone.LOGGER.debug("[포키 옷장] 입어보기 그리기 실패", e);
+        } finally {
+            if (old != null) box.setItem(0, old);
+            player.yBodyRot = bodyRot; player.setYRot(yRot); player.setXRot(xRot); player.yHeadRotO = headO; player.yHeadRot = head;
+            RenderSystem.clear(256, Minecraft.ON_OSX);
+        }
+    }
+
+    private static net.minecraft.world.Container cosmeticBox(net.minecraft.world.entity.LivingEntity e, String slot) {
+        try {
+            Class<?> capC = Class.forName("io.wispforest.accessories.api.AccessoriesCapability");
+            Class<?> conC = Class.forName("io.wispforest.accessories.api.AccessoriesContainer");
+            Object opt = capC.getMethod("getOptionally", net.minecraft.world.entity.LivingEntity.class).invoke(null, e);
+            Object cap = ((java.util.Optional<?>) opt).orElse(null);
+            if (cap == null) return null;
+            Object con = ((java.util.Map<?, ?>) capC.getMethod("getContainers").invoke(cap)).get(slot);
+            if (con == null) return null;
+            Object cos = conC.getMethod("getCosmeticAccessories").invoke(con);
+            return cos instanceof net.minecraft.world.Container c ? c : null;
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ex) {
+            return null;
+        }
     }
 
     /** 아이템 모델을 크게 빙글빙글. GuiGraphics.renderItem 과 같은 순서에 Y 회전만 더함 */

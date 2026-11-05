@@ -526,5 +526,8 @@
   "mcphone.wardrobe.count": "%s %s종",
   "mcphone.wardrobe.empty": "보여줄 치장이 없어요",
   "mcphone.wardrobe.drag": "드래그해서 돌려보기",
-  "mcphone.wardrobe.note": "미리보기 전용이에요"
+  "mcphone.wardrobe.note": "미리보기 전용이에요",
+  "mcphone.wardrobe.item_only": "아이템만",
+  "mcphone.wardrobe.try_on": "입어보기",
+  "mcphone.wardrobe.fitting": "시착 중"
 }

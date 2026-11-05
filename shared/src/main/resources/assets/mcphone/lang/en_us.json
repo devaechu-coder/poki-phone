@@ -716,5 +716,8 @@
   "mcphone.wardrobe.count": "%s · %s",
   "mcphone.wardrobe.empty": "No cosmetics to show",
   "mcphone.wardrobe.drag": "Drag to rotate",
-  "mcphone.wardrobe.note": "Preview only"
+  "mcphone.wardrobe.note": "Preview only",
+  "mcphone.wardrobe.item_only": "Item",
+  "mcphone.wardrobe.try_on": "Try on",
+  "mcphone.wardrobe.fitting": "Fitting"
 }
