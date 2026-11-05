@@ -704,5 +704,17 @@
   "mcphone.call.status.ended": "통화가 끝났어요.",
   "mcphone.call.status.failed": "통화를 연결하지 못했어요.",
   "mcphone.call.status.no_one": "부를 수 있는 사람이 없어요.",
-  "mcphone.chat.reply.too_old": "원문이 너무 예전이라 찾을 수 없어요."
+  "mcphone.chat.reply.too_old": "원문이 너무 예전이라 찾을 수 없어요.",
+  "mcphone.app.wardrobe": "Wardrobe",
+  "mcphone.wardrobe.title": "Wardrobe",
+  "mcphone.wardrobe.cat.hat": "Hat",
+  "mcphone.wardrobe.cat.face": "Face",
+  "mcphone.wardrobe.cat.back": "Back",
+  "mcphone.wardrobe.cat.tail": "Tail",
+  "mcphone.wardrobe.cat.outfit": "Outfit",
+  "mcphone.wardrobe.cat.lightstick": "Stick",
+  "mcphone.wardrobe.count": "%s · %s",
+  "mcphone.wardrobe.empty": "No cosmetics to show",
+  "mcphone.wardrobe.drag": "Drag to rotate",
+  "mcphone.wardrobe.note": "Preview only"
 }

@@ -156,6 +156,9 @@ public interface IPhoneApp {
      * 是否预装：true（默认）首次被发现即上主屏；false 进应用商店等玩家下载。
      * 只在该 App 首次进入目录时生效，此后以玩家的安装/卸载选择为准。
      */
+    /** 포키: true 면 지금은 홈 화면에서 숨김 (설치는 그대로). 매 프레임 불리니 가볍게 */
+    default boolean isHidden() { return false; }
+
     default boolean isPreinstalled() { return true; }
 
     /** App 版本号。默认 "1.0.0" */

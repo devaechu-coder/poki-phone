@@ -8,3 +8,4 @@ com.november.mcphone.feature.weather.client.WeatherApp
 com.november.mcphone.feature.quests.client.QuestsApp
 com.november.mcphone.feature.terminal.client.TerminalApp
 com.november.mcphone.feature.gym.client.GymApp
+com.november.mcphone.feature.wardrobe.client.WardrobeApp

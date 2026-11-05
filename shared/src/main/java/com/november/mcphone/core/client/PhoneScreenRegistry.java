@@ -148,13 +148,18 @@ public final class PhoneScreenRegistry {
         return true;
     }
 
+    /** 포키: 지금 숨길 앱인지 (OP 전용 앱 등). 남의 코드라 예외는 "안 숨김" */
+    private static boolean hidden(IPhoneApp app) {
+        try { return app.isHidden(); } catch (Throwable t) { return false; }
+    }
+
     /** 已安装 App 的只读列表，顺序就是主屏排列；目录里查不到的 id 跳过，getApp(int)/getAppCount 同一条规则，下标才对得上 */
     public static List<IPhoneApp> getApps() {
         ensureLoaded();
         List<IPhoneApp> out = new ArrayList<>(INSTALLED.size());
         for (ResourceLocation id : INSTALLED) {
             IPhoneApp app = CATALOG.get(id);
-            if (app != null) out.add(app);
+            if (app != null && !hidden(app)) out.add(app);
         }
         // unmodifiableList 而不是 List.copyOf：省一次拷贝，主屏每帧都走这条路
         return Collections.unmodifiableList(out);
@@ -164,13 +169,19 @@ public final class PhoneScreenRegistry {
     public static boolean moveApp(int from, int to) {
         ensureLoaded();
 
-        List<ResourceLocation> order = new ArrayList<>(INSTALLED);
+        // 포키: 숨긴 앱은 빼고 순서를 바꾼 뒤 맨 뒤에 다시 붙임 (주 화면 칸 번호와 맞추려고)
+        List<ResourceLocation> order = new ArrayList<>(), kept = new ArrayList<>();
+        for (ResourceLocation id : INSTALLED) {
+            IPhoneApp app = CATALOG.get(id);
+            if (app != null && hidden(app)) kept.add(id); else order.add(id);
+        }
         // 与界面预览共用 HomeLayout.reorder，预览与落定才一致
         if (!HomeLayout.reorder(order, from, to)) return false;
 
         // LinkedHashSet 没有就地重排，清空再灌回去
         INSTALLED.clear();
         INSTALLED.addAll(order);
+        INSTALLED.addAll(kept);
 
         saveState();
         return true;
@@ -266,7 +277,7 @@ public final class PhoneScreenRegistry {
         int i = 0;
         for (ResourceLocation id : INSTALLED) {
             IPhoneApp app = CATALOG.get(id);
-            if (app == null) continue;      // 与 getApps 同一条跳过规则，下标才对得上
+            if (app == null || hidden(app)) continue;      // 与 getApps 同一条跳过规则，下标才对得上
             if (i++ == index) return app;
         }
         return null;
@@ -277,7 +288,8 @@ public final class PhoneScreenRegistry {
         ensureLoaded();
         int n = 0;
         for (ResourceLocation id : INSTALLED) {
-            if (CATALOG.containsKey(id)) n++;
+            IPhoneApp app = CATALOG.get(id);
+            if (app != null && !hidden(app)) n++;
         }
         return n;
     }

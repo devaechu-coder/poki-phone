@@ -514,5 +514,17 @@
   "mcphone.call.status.ended": "통화가 끝났어요.",
   "mcphone.call.status.failed": "통화를 연결하지 못했어요.",
   "mcphone.call.status.no_one": "부를 수 있는 사람이 없어요.",
-  "mcphone.chat.reply.too_old": "원문이 너무 예전이라 찾을 수 없어요."
+  "mcphone.chat.reply.too_old": "원문이 너무 예전이라 찾을 수 없어요.",
+  "mcphone.app.wardrobe": "옷장",
+  "mcphone.wardrobe.title": "옷장",
+  "mcphone.wardrobe.cat.hat": "모자",
+  "mcphone.wardrobe.cat.face": "얼굴",
+  "mcphone.wardrobe.cat.back": "등",
+  "mcphone.wardrobe.cat.tail": "꼬리",
+  "mcphone.wardrobe.cat.outfit": "옷",
+  "mcphone.wardrobe.cat.lightstick": "응원봉",
+  "mcphone.wardrobe.count": "%s %s종",
+  "mcphone.wardrobe.empty": "보여줄 치장이 없어요",
+  "mcphone.wardrobe.drag": "드래그해서 돌려보기",
+  "mcphone.wardrobe.note": "미리보기 전용이에요"
 }
