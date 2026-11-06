@@ -26,11 +26,14 @@ public final class CameraHandler {
             // 文件名里带上坐标，相册看大图时用界面文字显示它——烧在照片上那一行在
             // 一百来像素宽的手机屏幕上只剩一两个像素高，读不出来。见 CameraStamp。
             // 水印关着时给 null，那就是原版自己的起名规矩
+            String shotName = CameraStamp.fileName(mc.gameDirectory, mc.player);
             Screenshot.grab(mc.gameDirectory,
-                    CameraStamp.fileName(mc.gameDirectory, mc.player),
+                    shotName,
                     mc.getMainRenderTarget(),
                     msg -> {
-                        if (mc.player != null) mc.player.displayClientMessage(msg, true);
+                        // 포키: 파일이 다 써진 뒤 불림 → 이때 사진 지문을 적어 둠
+                        CameraPhotos.pin(shotName);
+                        mc.execute(() -> { if (mc.player != null) mc.player.displayClientMessage(msg, true); });
                     });
         }
 

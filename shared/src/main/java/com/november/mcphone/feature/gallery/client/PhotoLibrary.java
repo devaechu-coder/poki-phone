@@ -36,11 +36,21 @@ public final class PhotoLibrary {
     /** 相册这一页的照片就是目录里的文件，类型直接沿用 {@link ImageFolder.Entry} */
     public static ImageFolder folder() { return FOLDER; }
 
-    public static List<ImageFolder.Entry> getPhotos() { return FOLDER.entries(); }
+    /** 포키: 앨범엔 포키폰 카메라 사진이랑 포키톡에서 저장한 사진만 (폴더에 넣은 외부 그림·F2 스크린샷은 안 보임) */
+    public static List<ImageFolder.Entry> getPhotos() {
+        List<ImageFolder.Entry> out = new java.util.ArrayList<>();
+        for (ImageFolder.Entry e : FOLDER.entries()) {
+            if (com.november.mcphone.feature.camera.client.CameraPhotos.isListed(e.path()) || e.fileName().startsWith("mcphone-")) out.add(e);
+        }
+        return out;
+    }
 
-    public static int count() { return FOLDER.count(); }
+    public static int count() { return getPhotos().size(); }
 
-    public static ImageFolder.Entry get(int index) { return FOLDER.get(index); }
+    public static ImageFolder.Entry get(int index) {
+        List<ImageFolder.Entry> l = getPhotos();
+        return index < 0 || index >= l.size() ? null : l.get(index);
+    }
 
     public static void refresh() { FOLDER.refresh(); }
 

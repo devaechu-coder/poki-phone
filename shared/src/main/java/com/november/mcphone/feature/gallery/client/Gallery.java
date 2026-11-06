@@ -155,7 +155,8 @@ public final class Gallery {
                 openX - x - HEADER_GAP);
         g.drawString(font, title, x, y, FontPalette.title(), true);
 
-        openFolderHovered = GuiUtil.drawFolderButton(g, openX, y, font.lineHeight, mouseX, mouseY);
+        // 포키: '폴더 열기' 버튼 없앰 (외부 그림 넣는 통로가 돼서)
+        openFolderHovered = false;
 
         // 总数往左让一格。让不下就不画：屏幕只有 120 宽，而一个读数不值得把那个键挤掉，
         // 也不值得压在标题上。中英文的字宽差着一倍，所以是量出来的，不是写死的
