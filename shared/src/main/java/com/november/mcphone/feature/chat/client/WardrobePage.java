@@ -30,8 +30,8 @@ import java.util.Set;
 public final class WardrobePage {
     /** 탭 순서 = 아이템 id (pokicos:<id>) */
     private static final String[] CATS = {"hat", "face", "back", "tail", "outfit", "lightstick"};
-    /** 목록에서 뺄 한정템: "<id>:<번호>" (테스터 새싹, 포획 원정 모자, 관리자 제복) */
-    private static final Set<String> HIDDEN = Set.of("hat:26", "hat:27", "outfit:3");
+    /** 목록에서 뺄 한정템: "<id>:<번호>" (테스터 새싹, 포획 원정 모자, 관리자 제복 1·2) */
+    private static final Set<String> HIDDEN = Set.of("hat:26", "hat:27", "outfit:3", "outfit:5");
 
     private static final List<List<ItemStack>> ITEMS = new ArrayList<>();
     private static int cat;
