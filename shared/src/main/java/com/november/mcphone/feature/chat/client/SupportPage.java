@@ -37,6 +37,8 @@ public final class SupportPage {
     private static final List<Page> stack = new ArrayList<>();
     private static UUID request;
     private static long deadline;
+    /** 답변 읽음 표시는 서버의 연속 요청 제한(0.2초)에 안 걸리게 잠깐 뒤에 보냄 */
+    private static long seenAt;
     private static String notice = "";
     private static boolean noticeBad;
     private static boolean staff;
@@ -65,6 +67,7 @@ public final class SupportPage {
     // ───────── 열기·닫기·통신 ─────────
 
     public static void open() {
+        seenAt = 0;
         page = Page.HOME; stack.clear(); scroll = 0; notice = ""; target = null; reason = -1;
         askBox.reset(); reportBox.reset(); replyBox.reset();
         send(SupportWire.Query.of(SupportWire.Kind.STATE));
@@ -87,6 +90,7 @@ public final class SupportPage {
     public static void accept(SupportWire.Reply r) {
         if (request == null || !request.equals(r.request())) return;
         request = null;
+        if (r.status() == SupportWire.Status.BUSY) return;
         if (r.status() != SupportWire.Status.OK) {
             String m = r.message().isEmpty() ? tr("status." + r.status().name().toLowerCase(Locale.ROOT)) : r.message();
             say(m, true);
@@ -102,7 +106,7 @@ public final class SupportPage {
             }
             case MINE -> {
                 mine = r.tickets();
-                if (unseen > 0) send(SupportWire.Query.of(SupportWire.Kind.SEEN));
+                if (unseen > 0) seenAt = System.currentTimeMillis() + 400;
             }
             case BOX -> box = r.tickets();
             case ACT -> { box = r.tickets(); say(tr("done"), false); replyBox.reset(); }
@@ -131,6 +135,7 @@ public final class SupportPage {
         HITS.clear();
         // 서버가 답을 안 주면 (서버 쪽 포키폰이 예전 버전 등) 계속 '불러오는 중' 이 되지 않게
         if (request != null && System.currentTimeMillis() > deadline) { request = null; say(tr("status.timeout"), true); }
+        if (seenAt > 0 && request == null && System.currentTimeMillis() > seenAt) { seenAt = 0; send(SupportWire.Query.of(SupportWire.Kind.SEEN)); }
         int x = left + 4, w = sw - 8, y = top + statusH + ChatLayout.TOP_GAP;
         int bottom = top + sh - navH - 2;
 
@@ -294,7 +299,7 @@ public final class SupportPage {
         int total = 0;
         for (var t : items) {
             int h = 4 + lh + Math.min(3, wrap(font, t.message(), w - 8, ms).size()) * lh + 3;
-            if (!t.reply().isEmpty() && !staffView) h += 4 + lh + wrap(font, t.reply(), w - 14, ms).size() * lh + 3;
+            if (!t.reply().isEmpty() && !staffView) h += 1 + 3 + lh + wrap(font, t.reply(), w - 14, ms).size() * lh + 1;
             if (staffView) h += lh;
             hs.add(h); total += h + 3;
         }
