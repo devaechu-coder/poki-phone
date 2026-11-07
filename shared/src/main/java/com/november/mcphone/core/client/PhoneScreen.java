@@ -67,7 +67,7 @@ import java.util.UUID;
 /** 手机主屏幕 GUI：管理各页面之间的导航（{@link Mode}）、分发输入、兜住附属页面的异常 */
 public final class PhoneScreen extends PhoneScreenBase {
 
-    public enum Mode { MAIN, SETTINGS, WALLPAPER_PICKER, FONT_COLOR_PICKER, UI_SCALE, HUD, APP_MANAGER, APP_MANAGER_DETAIL, MUSIC_PLAYER, APP_STORE, APP_DETAIL, COMPANION_APPS, ADDON_PAGE, ABOUT, CHANGELOG, GALLERY, DEVICE_NAME, CHAT, CHAT_PROFILE, CHAT_PLAYER_PROFILE, CHAT_CONTACTS, CHAT_NEW_FRIENDS, CHAT_ADD_CONTACT, CHAT_CONVERSATION, CHAT_GROUP_CONVERSATION, CHAT_GROUP_CREATE, CHAT_GROUP_DETAILS, CHAT_PHOTO_PICKER, CHAT_STICKER_PICKER, CHAT_FEED, CHAT_FEED_PHOTO_PICKER, GYM, WARDROBE, CHAT_POKEMON_PICKER, CALL, NOTES, NOTE_EDIT, CLOCK, WEATHER, READER, TXT_BOOK, VAULT, AUTHOR_KEY }
+    public enum Mode { MAIN, SETTINGS, WALLPAPER_PICKER, FONT_COLOR_PICKER, UI_SCALE, HUD, APP_MANAGER, APP_MANAGER_DETAIL, MUSIC_PLAYER, APP_STORE, APP_DETAIL, COMPANION_APPS, ADDON_PAGE, ABOUT, CHANGELOG, GALLERY, DEVICE_NAME, CHAT, CHAT_PROFILE, CHAT_PLAYER_PROFILE, CHAT_CONTACTS, CHAT_NEW_FRIENDS, CHAT_ADD_CONTACT, CHAT_CONVERSATION, CHAT_GROUP_CONVERSATION, CHAT_GROUP_CREATE, CHAT_GROUP_DETAILS, CHAT_PHOTO_PICKER, CHAT_STICKER_PICKER, CHAT_FEED, CHAT_FEED_PHOTO_PICKER, GYM, WARDROBE, SUPPORT, CHAT_POKEMON_PICKER, CALL, NOTES, NOTE_EDIT, CLOCK, WEATHER, READER, TXT_BOOK, VAULT, AUTHOR_KEY }
 
     private final long openTimeMs;
     private boolean animationDone;
@@ -357,6 +357,8 @@ public final class PhoneScreen extends PhoneScreenBase {
         if (target == Mode.GYM) com.november.mcphone.feature.chat.client.GymPage.open();
         if (this.mode == Mode.WARDROBE && target != Mode.WARDROBE) com.november.mcphone.feature.chat.client.WardrobePage.close();
         if (target == Mode.WARDROBE) com.november.mcphone.feature.chat.client.WardrobePage.open();
+        if (this.mode == Mode.SUPPORT && target != Mode.SUPPORT) com.november.mcphone.feature.chat.client.SupportPage.close();
+        if (target == Mode.SUPPORT) com.november.mcphone.feature.chat.client.SupportPage.open();
         if (target == Mode.CALL && this.mode != Mode.CALL) callReturnMode = this.mode;
 
         if (target == Mode.WALLPAPER_PICKER) {
@@ -759,6 +761,7 @@ public final class PhoneScreen extends PhoneScreenBase {
         if (mode == Mode.CALL) { navigateTo(callReturnMode); return true; }
         if (mode == Mode.GYM) { if (!com.november.mcphone.feature.chat.client.GymPage.back()) navigateTo(Mode.MAIN); return true; }
         if (mode == Mode.WARDROBE) { if (!com.november.mcphone.feature.chat.client.WardrobePage.back()) navigateTo(Mode.MAIN); return true; }
+        if (mode == Mode.SUPPORT) { if (!com.november.mcphone.feature.chat.client.SupportPage.back()) navigateTo(Mode.MAIN); return true; }
         if (mode == Mode.CHAT_FEED) { if (!chatFeed.back()) navigateTo(Mode.CHAT); return true; }
         // 选照片、选表情都是从某个会话点进来的，返回自然回那个会话
         if (mode == Mode.CHAT_PHOTO_PICKER || mode == Mode.CHAT_STICKER_PICKER || mode == Mode.CHAT_POKEMON_PICKER) {
@@ -1067,6 +1070,7 @@ public final class PhoneScreen extends PhoneScreenBase {
             }
             case GYM -> com.november.mcphone.feature.chat.client.GymPage.render(g, phoneLeft, phoneTop, sw, sh, statusH, navH, mouseX, mouseY, font);
             case WARDROBE -> com.november.mcphone.feature.chat.client.WardrobePage.render(g, phoneLeft, phoneTop, sw, sh, statusH, navH, mouseX, mouseY, font);
+            case SUPPORT -> com.november.mcphone.feature.chat.client.SupportPage.render(g, phoneLeft, phoneTop, sw, sh, statusH, navH, mouseX, mouseY, font);
             case CHAT_FEED -> chatFeed.render(g, phoneLeft, phoneTop, sw, sh, statusH, navH, mouseX, mouseY, font, partialTick);
             case CHAT_FEED_PHOTO_PICKER -> chatFeedPicker.render(g, phoneLeft, phoneTop,
                     sw, sh, statusH, navH,
@@ -1583,6 +1587,10 @@ public final class PhoneScreen extends PhoneScreenBase {
                 com.november.mcphone.feature.chat.client.WardrobePage.mouseClicked(mx, my, button);
                 yield true;
             }
+            case SUPPORT -> {
+                com.november.mcphone.feature.chat.client.SupportPage.mouseClicked(mx, my, button);
+                yield true;
+            }
             case CHAT_FEED -> {
                 chatFeed.mouseClicked(mx, my, button);
                 var feedAction = chatFeed.consumeAction();
@@ -1796,6 +1804,7 @@ public final class PhoneScreen extends PhoneScreenBase {
         if (mode == Mode.CHAT_FEED && chatFeed.mouseScrolled(mx, my, scrollY)) return true;
         if (mode == Mode.GYM && com.november.mcphone.feature.chat.client.GymPage.mouseScrolled(scrollY)) return true;
         if (mode == Mode.WARDROBE && com.november.mcphone.feature.chat.client.WardrobePage.mouseScrolled(scrollY)) return true;
+        if (mode == Mode.SUPPORT && com.november.mcphone.feature.chat.client.SupportPage.mouseScrolled(scrollY)) return true;
         if (mode == Mode.CHAT_STICKER_PICKER && chatStickerPicker.mouseScrolled(scrollY)) return true;
         if (mode == Mode.NOTES && notesList.mouseScrolled(scrollY)) return true;
         if (mode == Mode.READER && bookList.mouseScrolled(scrollY)) return true;
@@ -1863,6 +1872,7 @@ public final class PhoneScreen extends PhoneScreenBase {
         if (mode == Mode.CHAT_GROUP_CREATE && chatGroupCreate.keyPressed(keyCode, scanCode, modifiers)) return true;
         if ((mode == Mode.CHAT_PROFILE || mode == Mode.CHAT_PLAYER_PROFILE) && chatProfile.keyPressed(keyCode,scanCode,modifiers)) return true;
         if (mode == Mode.CHAT_FEED && chatFeed.keyPressed(keyCode, scanCode, modifiers)) return true;
+        if (mode == Mode.SUPPORT && keyCode != 256 && com.november.mcphone.feature.chat.client.SupportPage.keyPressed(keyCode, scanCode, modifiers)) return true;
         if (mode == Mode.CHAT_GROUP_DETAILS && chatGroupDetails.keyPressed(keyCode, scanCode, modifiers)) return true;
         if (mode == Mode.NOTE_EDIT) {
             noteEditor.keyPressed(keyCode, scanCode, modifiers);
@@ -1940,6 +1950,7 @@ public final class PhoneScreen extends PhoneScreenBase {
         if (mode == Mode.CHAT_GROUP_CREATE && chatGroupCreate.charTyped(c, modifiers)) return true;
         if ((mode == Mode.CHAT_PROFILE || mode == Mode.CHAT_PLAYER_PROFILE) && chatProfile.charTyped(c,modifiers)) return true;
         if (mode == Mode.CHAT_FEED && chatFeed.charTyped(c, modifiers)) return true;
+        if (mode == Mode.SUPPORT && com.november.mcphone.feature.chat.client.SupportPage.charTyped(c, modifiers)) return true;
         if (mode == Mode.CHAT_GROUP_DETAILS && chatGroupDetails.charTyped(c, modifiers)) return true;
         if (mode == Mode.NOTE_EDIT && noteEditor.charTyped(c, modifiers)) return true;
         if (mode == Mode.READER && bookList.charTyped(c, modifiers)) return true;
@@ -1993,6 +2004,7 @@ public final class PhoneScreen extends PhoneScreenBase {
         if (mode == Mode.CHAT_FEED || mode == Mode.CHAT_FEED_PHOTO_PICKER) { chatFeed.close(); chatFeedPicker.close(); }
         if (mode == Mode.GYM) com.november.mcphone.feature.chat.client.GymPage.close();
         if (mode == Mode.WARDROBE) com.november.mcphone.feature.chat.client.WardrobePage.close();
+        if (mode == Mode.SUPPORT) com.november.mcphone.feature.chat.client.SupportPage.close();
 
         // 图片消息的贴图只在手机开着时有用。留到关机才放，是因为"会话 → 列表 → 会话"
         // 是常有的来回，每次都放掉等于每次回来重下一遍
