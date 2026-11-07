@@ -36,6 +36,7 @@ public final class SupportPage {
     private static Page page = Page.HOME;
     private static final List<Page> stack = new ArrayList<>();
     private static UUID request;
+    private static long deadline;
     private static String notice = "";
     private static boolean noticeBad;
     private static boolean staff;
@@ -76,6 +77,7 @@ public final class SupportPage {
 
     private static void send(SupportWire.Query q) {
         request = q.request();
+        deadline = System.currentTimeMillis() + 6000;
         try { MCphoneNetwork.sendToServer(new SupportRequestPacket(q)); }
         catch (RuntimeException e) { request = null; say(tr("status.error"), true); }
     }
@@ -127,6 +129,8 @@ public final class SupportPage {
 
     public static void render(GuiGraphics g, int left, int top, int sw, int sh, int statusH, int navH, int mx, int my, Font font) {
         HITS.clear();
+        // 서버가 답을 안 주면 (서버 쪽 포키폰이 예전 버전 등) 계속 '불러오는 중' 이 되지 않게
+        if (request != null && System.currentTimeMillis() > deadline) { request = null; say(tr("status.timeout"), true); }
         int x = left + 4, w = sw - 8, y = top + statusH + ChatLayout.TOP_GAP;
         int bottom = top + sh - navH - 2;
 
