@@ -607,5 +607,20 @@
   "mcphone.wardrobe.bag": "가방에 있는 것",
   "mcphone.wardrobe.bag_none": "가방에 치장이 없어요",
   "mcphone.wardrobe.put_on": "끼기",
-  "mcphone.wardrobe.take_off": "벗기"
+  "mcphone.wardrobe.take_off": "벗기",
+  "mcphone.app.types": "타입 상성",
+  "mcphone.types.title": "타입 상성",
+  "mcphone.types.attack": "공격할 때",
+  "mcphone.types.defend": "방어할 때",
+  "mcphone.types.hint_attack": "기술 타입을 골라봐",
+  "mcphone.types.hint_defend": "포켓몬 타입을 1~2개 골라봐",
+  "mcphone.types.atk_super": "효과가 굉장해 ×2",
+  "mcphone.types.atk_weak": "효과가 별로 ×½",
+  "mcphone.types.atk_none": "효과가 없어 ×0",
+  "mcphone.types.def_x4": "엄청 약해 ×4",
+  "mcphone.types.def_x2": "약해 ×2",
+  "mcphone.types.def_half": "잘 버텨 ×½",
+  "mcphone.types.def_quarter": "아주 잘 버텨 ×¼",
+  "mcphone.types.def_none": "안 맞아 ×0",
+  "mcphone.types.def_note": "특성으로 바뀔 수 있어 (예: 부유)"
 }

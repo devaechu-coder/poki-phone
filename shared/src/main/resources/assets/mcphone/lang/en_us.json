@@ -797,5 +797,20 @@
   "mcphone.wardrobe.bag": "가방에 있는 것",
   "mcphone.wardrobe.bag_none": "가방에 치장이 없어요",
   "mcphone.wardrobe.put_on": "끼기",
-  "mcphone.wardrobe.take_off": "벗기"
+  "mcphone.wardrobe.take_off": "벗기",
+  "mcphone.app.types": "Type Chart",
+  "mcphone.types.title": "Type Chart",
+  "mcphone.types.attack": "Attacking",
+  "mcphone.types.defend": "Defending",
+  "mcphone.types.hint_attack": "Pick a move type",
+  "mcphone.types.hint_defend": "Pick 1–2 Pokémon types",
+  "mcphone.types.atk_super": "Super effective ×2",
+  "mcphone.types.atk_weak": "Not very effective ×½",
+  "mcphone.types.atk_none": "No effect ×0",
+  "mcphone.types.def_x4": "Very weak ×4",
+  "mcphone.types.def_x2": "Weak ×2",
+  "mcphone.types.def_half": "Resists ×½",
+  "mcphone.types.def_quarter": "Strongly resists ×¼",
+  "mcphone.types.def_none": "Immune ×0",
+  "mcphone.types.def_note": "Abilities can change this (e.g. Levitate)"
 }
