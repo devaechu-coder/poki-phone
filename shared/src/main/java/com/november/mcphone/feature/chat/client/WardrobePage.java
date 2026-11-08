@@ -43,6 +43,11 @@ public final class WardrobePage {
     private static float angle;
     /** true 면 내 캐릭터에 씌워서 보기 (응원봉은 아이템만) */
     private static boolean tryOn = true;
+    /** true 면 '내 치장' (가진 것·낀 것, 바로 끼기/벗기) */
+    private static boolean mine;
+    private static long lastAct;
+    private static final String[] WEAR = {"hat", "face", "back", "tail", "outfit"};
+    private static final String[] WEAR_KO = {"모자", "얼굴", "등", "꼬리", "옷"};
     private static long lastFrame, lastDrag;
     private record Hit(ChatLayout.Rect r, Runnable run) {}
     private static final List<Hit> HITS = new ArrayList<>();
@@ -117,6 +122,19 @@ public final class WardrobePage {
 
         if (inDetail) { detail(g, font, items, x, y, w, bottom, mx, my); return; }
 
+        // 전체 / 내 치장
+        {
+            int hw = w / 2;
+            var a = new ChatLayout.Rect(x, y, hw - 1, 11);
+            var b = new ChatLayout.Rect(x + hw, y, w - hw, 11);
+            seg(g, font, a, tr("all"), !mine, mx, my);
+            seg(g, font, b, tr("mine"), mine, mx, my);
+            HITS.add(new Hit(a, () -> { mine = false; scroll = 0; }));
+            HITS.add(new Hit(b, () -> { mine = true; scroll = 0; }));
+            y += 14;
+        }
+        if (mine) { mineList(g, font, x, y, w, bottom, mx, my); return; }
+
         // 탭
         int tw = w / CATS.length;
         for (int i = 0; i < CATS.length; i++) {
@@ -158,6 +176,97 @@ public final class WardrobePage {
             }
             contentH = ((items.size() + cols - 1) / cols) * (ch + gap);
         } finally { GuiUtil.disableScissor(g); }
+    }
+
+    /** 내 치장: 지금 낀 것(칸별) + 가방에 있는 치장. 끼기/벗기는 서버 명령어(/치장 끼기·벗기)로 */
+    private static void mineList(GuiGraphics g, Font font, int x, int y, int w, int bottom, int mx, int my) {
+        Minecraft mc = Minecraft.getInstance();
+        var player = mc.player;
+        if (player == null) return;
+        record Row(String header, ItemStack stack, String label, Runnable act, String actText) {}
+        List<Row> rows = new ArrayList<>();
+        rows.add(new Row(tr("worn"), null, null, null, null));
+        int worn = 0;
+        for (int i = 0; i < WEAR.length; i++) {
+            net.minecraft.world.Container box = wornBox(player, WEAR[i]);
+            ItemStack st = box != null && box.getContainerSize() > 0 ? box.getItem(0) : ItemStack.EMPTY;
+            if (st.isEmpty()) continue;
+            worn++;
+            String ko = WEAR_KO[i];
+            rows.add(new Row(null, st, ko, () -> command("치장 벗기 " + ko), tr("take_off")));
+        }
+        if (worn == 0) rows.add(new Row(null, null, tr("worn_none"), null, null));
+        rows.add(new Row(tr("bag"), null, null, null, null));
+        int bag = 0;
+        var inv = player.getInventory().items;
+        for (int i = 0; i < inv.size(); i++) {
+            ItemStack st = inv.get(i);
+            if (st.isEmpty()) continue;
+            ResourceLocation id = BuiltInRegistries.ITEM.getKey(st.getItem());
+            if (!"pokicos".equals(id.getNamespace()) || slotOf(st) == null) continue;
+            bag++;
+            int slot = i;
+            rows.add(new Row(null, st, tr("cat." + id.getPath()), () -> command("치장 끼기 " + slot), tr("put_on")));
+        }
+        if (bag == 0) rows.add(new Row(null, null, tr("bag_none"), null, null));
+
+        int rowH = 20, headH = 11;
+        int total = 0;
+        for (Row r : rows) total += r.header() != null ? headH : (r.stack() == null ? 12 : rowH + 2);
+        viewH = bottom - y; contentH = total;
+        scroll = Math.max(0, Math.min(scroll, Math.max(0, contentH - viewH)));
+        GuiUtil.enableScissor(g, x, y, x + w, bottom);
+        try {
+            int cy = (int) (y - scroll);
+            for (Row r : rows) {
+                if (r.header() != null) {
+                    ChatUi.label(g, font, r.header(), x + 2, cy + 6, ChatLayout.META_SCALE, ChatUi.accent());
+                    cy += headH; continue;
+                }
+                if (r.stack() == null) {
+                    ChatUi.label(g, font, r.label(), x + 4, cy + 5, ChatLayout.META_SCALE, FontPalette.subtle());
+                    cy += 12; continue;
+                }
+                if (cy + rowH >= y && cy <= bottom) {
+                    ChatUi.glass(g, ChatGlass.Surface.CARD, x, cy, w, rowH, false);
+                    GuiUtil.drawItemIcon(g, r.stack(), x + 2, cy + 2, 16);
+                    int bw = 22;
+                    String name = ChatUi.truncate(font, r.stack().getHoverName().getString(), w - 24 - bw - 4, ChatLayout.META_SCALE);
+                    ChatUi.label(g, font, name, x + 21, cy + 7, ChatLayout.META_SCALE, FontPalette.body());
+                    ChatUi.label(g, font, r.label(), x + 21, cy + 14, ChatLayout.META_SCALE, FontPalette.subtle());
+                    var br = new ChatLayout.Rect(x + w - bw - 2, cy + 4, bw, 12);
+                    boolean in = my >= y && my < bottom && br.contains(mx, my);
+                    ChatUi.roundedFill(g, br.x(), br.y(), br.width(), br.height(), in ? ChatUi.accent() : 0xFF6A5AA8);
+                    ChatUi.buttonText(g, font, r.actText(), br.x() + br.width() / 2f, br.y() + br.height() / 2f, ChatLayout.META_SCALE, 0xFFFFFFFF);
+                    if (my >= y && my < bottom) HITS.add(new Hit(br, r.act()));
+                }
+                cy += rowH + 2;
+            }
+        } finally { GuiUtil.disableScissor(g); }
+    }
+
+    private static void command(String cmd) {
+        long now = System.currentTimeMillis();
+        if (now - lastAct < 350) return;
+        lastAct = now;
+        var p = Minecraft.getInstance().player;
+        if (p != null) p.connection.sendCommand(cmd);
+    }
+
+    private static net.minecraft.world.Container wornBox(net.minecraft.world.entity.LivingEntity e, String slot) {
+        try {
+            Class<?> capC = Class.forName("io.wispforest.accessories.api.AccessoriesCapability");
+            Class<?> conC = Class.forName("io.wispforest.accessories.api.AccessoriesContainer");
+            Object opt = capC.getMethod("getOptionally", net.minecraft.world.entity.LivingEntity.class).invoke(null, e);
+            Object cap = ((java.util.Optional<?>) opt).orElse(null);
+            if (cap == null) return null;
+            Object con = ((java.util.Map<?, ?>) capC.getMethod("getContainers").invoke(cap)).get(slot);
+            if (con == null) return null;
+            Object acc = conC.getMethod("getAccessories").invoke(con);
+            return acc instanceof net.minecraft.world.Container c ? c : null;
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ex) {
+            return null;
+        }
     }
 
     private static void detail(GuiGraphics g, Font font, List<ItemStack> items, int x, int y, int w, int bottom, int mx, int my) {
