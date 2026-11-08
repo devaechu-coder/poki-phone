@@ -32,6 +32,8 @@ public final class WardrobePage {
     private static final String[] CATS = {"hat", "face", "back", "tail", "outfit", "lightstick"};
     /** 목록에서 뺄 한정템: "<id>:<번호>" (테스터 새싹, 포획 원정 모자, 관리자 제복 1·2) */
     private static final Set<String> HIDDEN = Set.of("hat:26", "hat:27", "outfit:3", "outfit:5");
+    /** OP 한테만 보이는 것 (아직 공개 전): 머리 위 포키냥 */
+    private static final Set<String> OP_ONLY = Set.of("hat:28");
 
     private static final List<List<ItemStack>> ITEMS = new ArrayList<>();
     private static int cat;
@@ -70,6 +72,7 @@ public final class WardrobePage {
                 if (c < 0) continue;
                 var cmd = s.get(DataComponents.CUSTOM_MODEL_DATA);
                 if (cmd != null && HIDDEN.contains(id.getPath() + ":" + cmd.value())) continue;
+                if (cmd != null && OP_ONLY.contains(id.getPath() + ":" + cmd.value()) && !mc.player.hasPermissions(2)) continue;
                 ITEMS.get(c).add(s.copy());
             }
         } catch (RuntimeException e) {
