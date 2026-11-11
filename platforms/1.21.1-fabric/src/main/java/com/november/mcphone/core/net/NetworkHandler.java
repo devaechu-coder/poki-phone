@@ -142,6 +142,7 @@ public final class NetworkHandler {
         com.november.mcphone.feature.sns.net.SnsNetworking.register();
         com.november.mcphone.feature.gym.net.GymNetworking.register();
         com.november.mcphone.feature.support.net.SupportNetworking.register();
+        com.november.mcphone.feature.wardrobe.net.WardrobeNetworking.register();
         com.november.mcphone.feature.call.CallNetworking.register();
     }
 

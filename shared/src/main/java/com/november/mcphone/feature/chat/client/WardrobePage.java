@@ -18,68 +18,125 @@ import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 
+import com.november.mcphone.feature.wardrobe.net.WardrobeRequestPacket;
+import com.november.mcphone.feature.wardrobe.net.WardrobeWire;
+
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * 포키 옷장 — 치장(PokiCosmetics) 미리보기 전용. 얻는 곳·보유 여부는 안 보여 준다.
+ * 포키 옷장 — 치장(PokiCosmetics) 미리보기 + 옷장 귀속 입기.
  * 목록은 PokiCosmetics 크리에이티브 탭(pokicos:cosmetics)에서 읽어서, 치장이 늘면 따라 늘어난다.
- * 지금은 OP 만 보인다 ({@link com.november.mcphone.feature.wardrobe.client.WardrobeApp}).
+ * 이름이 "포키 모자 (하늘)" 처럼 "이름 (색)" 이면 한 칸으로 묶고, 상세에서 색을 고른다.
+ * 가진 치장(옷장)은 서버 PokiCosmetics 가 저장하고, 여기서 입기·벗기 요청을 보낸다 ({@link WardrobeWire}).
  */
 public final class WardrobePage {
     /** 탭 순서 = 아이템 id (pokicos:<id>) */
     private static final String[] CATS = {"hat", "face", "back", "tail", "outfit", "lightstick"};
-    /** 목록에서 뺄 한정템: "<id>:<번호>" (테스터 새싹, 포획 원정 모자, 관리자 제복 1·2) */
+    /** 전체 목록에서 뺄 한정템: "<id>:<번호>" (테스터 새싹, 포획 원정 모자, 관리자 제복 1·2) — 가지고 있으면 내 치장에는 나옴 */
     private static final Set<String> HIDDEN = Set.of("hat:26", "hat:27", "outfit:3", "outfit:5");
     /** OP 한테만 보이는 것 (아직 공개 전): 머리 위 포키냥 */
     private static final Set<String> OP_ONLY = Set.of("hat:28");
+    private static final String[] WEAR = {"hat", "face", "back", "tail", "outfit"};
+    private static final Pattern VARIANT = Pattern.compile("^(.+) \\((.+)\\)$");
 
-    private static final List<List<ItemStack>> ITEMS = new ArrayList<>();
+    /** 한 디자인 (색 묶음) */
+    private record Family(String name, List<ItemStack> variants) {}
+
+    private static final List<List<Family>> FAMS = new ArrayList<>();
+    /** 키 → 아이템 (숨김 포함) */
+    private static final Map<String, ItemStack> ALL = new LinkedHashMap<>();
     private static int cat;
-    private static int detail = -1;
+    private static int detail = -1, variant;
     private static double scroll;
     private static int contentH, viewH;
     private static float angle;
     /** true 면 내 캐릭터에 씌워서 보기 (응원봉은 아이템만) */
     private static boolean tryOn = true;
-    /** true 면 '내 치장' (가진 것·낀 것, 바로 끼기/벗기) */
+    /** true 면 '내 치장' (옷장에 있는 것 · 입은 것) */
     private static boolean mine;
-    private static long lastAct;
-    private static final String[] WEAR = {"hat", "face", "back", "tail", "outfit"};
-    private static final String[] WEAR_KO = {"모자", "얼굴", "등", "꼬리", "옷"};
     private static long lastFrame, lastDrag;
     private record Hit(ChatLayout.Rect r, Runnable run) {}
     private static final List<Hit> HITS = new ArrayList<>();
+
+    // 서버 옷장
+    /** null = 아직 모름 (불러오는 중 / 서버에 옷장 기능 없음) */
+    private static Set<String> owned;
+    private static boolean noMod;
+    private static long pendingAt;
+    private static String toast = "";
+    private static long toastAt;
 
     private static String tr(String k) { return Component.translatable("mcphone.wardrobe." + k).getString(); }
 
     public static void open() {
         detail = -1; scroll = 0; angle = 0; FITS.clear();
         load();
+        request(WardrobeWire.Kind.LIST, "", 0);
     }
 
     public static void close() { HITS.clear(); detail = -1; }
 
+    private static void request(WardrobeWire.Kind kind, String slot, int cmd) {
+        long now = System.currentTimeMillis();
+        if (kind != WardrobeWire.Kind.LIST && now - pendingAt < 300) return;
+        pendingAt = now;
+        try { com.november.mcphone.core.net.MCphoneNetwork.sendToServer(new WardrobeRequestPacket(WardrobeWire.Query.of(kind, slot, cmd))); }
+        catch (RuntimeException e) { noMod = true; }
+    }
+
+    /** 서버 답 (네트워크 스레드 → 클라 메인에서 불림) */
+    public static void accept(WardrobeWire.Reply r) {
+        pendingAt = 0;
+        switch (r.status()) {
+            case OK -> { owned = new HashSet<>(r.owned()); noMod = false; }
+            case ERROR -> { if (!r.owned().isEmpty() || owned == null) owned = new HashSet<>(r.owned()); say(r.message().isEmpty() ? tr("fail") : r.message()); }
+            case NO_MOD -> noMod = true;
+            default -> { }
+        }
+    }
+
+    private static void say(String s) { toast = s; toastAt = System.currentTimeMillis(); }
+
+    private static String keyOf(ItemStack s) {
+        var cmd = s.get(DataComponents.CUSTOM_MODEL_DATA);
+        return BuiltInRegistries.ITEM.getKey(s.getItem()).getPath() + ":" + (cmd == null ? 0 : cmd.value());
+    }
+
+    private static boolean has(ItemStack s) { return owned != null && owned.contains(keyOf(s)); }
+
     private static void load() {
-        ITEMS.clear();
-        for (int i = 0; i < CATS.length; i++) ITEMS.add(new ArrayList<>());
+        FAMS.clear(); ALL.clear();
+        for (int i = 0; i < CATS.length; i++) FAMS.add(new ArrayList<>());
         try {
             Minecraft mc = Minecraft.getInstance();
             CreativeModeTab tab = BuiltInRegistries.CREATIVE_MODE_TAB.get(ResourceLocation.fromNamespaceAndPath("pokicos", "cosmetics"));
             if (tab == null || mc.player == null || mc.level == null) return;
             if (tab.getDisplayItems().isEmpty())
                 CreativeModeTabs.tryRebuildTabContents(mc.player.connection.enabledFeatures(), mc.player.canUseGameMasterBlocks(), mc.level.registryAccess());
+            List<Map<String, Family>> byName = new ArrayList<>();
+            for (int i = 0; i < CATS.length; i++) byName.add(new LinkedHashMap<>());
             for (ItemStack s : tab.getDisplayItems()) {
                 ResourceLocation id = BuiltInRegistries.ITEM.getKey(s.getItem());
                 if (!"pokicos".equals(id.getNamespace())) continue;
                 int c = indexOf(id.getPath());
                 if (c < 0) continue;
-                var cmd = s.get(DataComponents.CUSTOM_MODEL_DATA);
-                if (cmd != null && HIDDEN.contains(id.getPath() + ":" + cmd.value())) continue;
-                if (cmd != null && OP_ONLY.contains(id.getPath() + ":" + cmd.value()) && !mc.player.hasPermissions(2)) continue;
-                ITEMS.get(c).add(s.copy());
+                String key = keyOf(s);
+                ALL.put(key, s.copy());
+                if (HIDDEN.contains(key)) continue;
+                if (OP_ONLY.contains(key) && !mc.player.hasPermissions(2)) continue;
+                String name = s.getHoverName().getString();
+                Matcher m = VARIANT.matcher(name);
+                String fam = m.matches() ? m.group(1) : name + "\u0000" + key; // 묶음이 아니면 혼자
+                byName.get(c).computeIfAbsent(fam, k -> new Family(m.matches() ? m.group(1) : name, new ArrayList<>())).variants().add(s.copy());
             }
+            for (int i = 0; i < CATS.length; i++) FAMS.get(i).addAll(byName.get(i).values());
         } catch (RuntimeException e) {
             com.november.mcphone.MCphone.LOGGER.warn("[포키 옷장] 치장 목록을 못 읽음", e);
         }
@@ -90,7 +147,19 @@ public final class WardrobePage {
         return -1;
     }
 
-    private static List<ItemStack> current() { return ITEMS.isEmpty() ? List.of() : ITEMS.get(cat); }
+    private static List<Family> current() { return FAMS.isEmpty() ? List.of() : FAMS.get(cat); }
+
+    /** 묶음에서 처음 보여줄 색: 입고 있는 것 → 가진 것 → 첫 번째 */
+    private static int pick(Family f) {
+        for (int i = 0; i < f.variants().size(); i++) if (worn(f.variants().get(i))) return i;
+        for (int i = 0; i < f.variants().size(); i++) if (has(f.variants().get(i))) return i;
+        return 0;
+    }
+
+    private static String variantName(ItemStack s) {
+        Matcher m = VARIANT.matcher(s.getHoverName().getString());
+        return m.matches() ? m.group(2) : s.getHoverName().getString();
+    }
 
     /** 뒤로: 상세면 목록으로. false 면 홈으로 */
     public static boolean back() {
@@ -108,22 +177,21 @@ public final class WardrobePage {
         HITS.clear();
         int x = left + 4, w = sw - 8, y = top + statusH + ChatLayout.TOP_GAP;
         int bottom = top + sh - navH - 2;
-        List<ItemStack> items = current();
-        boolean inDetail = detail >= 0 && detail < items.size();
+        List<Family> fams = current();
+        boolean inDetail = detail >= 0 && detail < fams.size();
 
         if (inDetail) {
             var back = new ChatLayout.Rect(x, y, 12, ChatLayout.HEADER_HEIGHT);
             ChatUi.sizedIcon(g, ChatUi.Icon.BACK, x + 2.5f, y + 2.5f, 7, back.contains(mx, my) ? ChatUi.accent() : FontPalette.body());
             HITS.add(new Hit(back, WardrobePage::back));
         }
-        String title = inDetail ? ChatUi.truncate(font, items.get(detail).getHoverName().getString(), w - 28, ChatLayout.TEXT_SCALE) : tr("title");
+        String title = inDetail ? ChatUi.truncate(font, fams.get(detail).name(), w - 28, ChatLayout.TEXT_SCALE) : tr("title");
         ChatUi.buttonText(g, font, title, x + w / 2f, y + ChatLayout.HEADER_HEIGHT / 2f, ChatLayout.TEXT_SCALE, FontPalette.title());
         y += ChatLayout.HEADER_HEIGHT + 3;
 
-        if (inDetail) { detail(g, font, items, x, y, w, bottom, mx, my); return; }
-
-        // 전체 / 내 치장
-        {
+        if (inDetail) detail(g, font, fams, x, y, w, bottom, mx, my);
+        else {
+            // 전체 / 내 치장
             int hw = w / 2;
             var a = new ChatLayout.Rect(x, y, hw - 1, 11);
             var b = new ChatLayout.Rect(x + hw, y, w - hw, 11);
@@ -132,10 +200,20 @@ public final class WardrobePage {
             HITS.add(new Hit(a, () -> { mine = false; scroll = 0; }));
             HITS.add(new Hit(b, () -> { mine = true; scroll = 0; }));
             y += 14;
+            if (mine) mineList(g, font, x, y, w, bottom, mx, my);
+            else grid(g, font, fams, x, y, w, bottom, mx, my);
         }
-        if (mine) { mineList(g, font, x, y, w, bottom, mx, my); return; }
 
-        // 탭
+        // 알림 (입기 실패 등)
+        if (!toast.isEmpty() && System.currentTimeMillis() - toastAt < 2500) {
+            int tw = Math.min(w, (int) ChatUi.width(font, toast, ChatLayout.META_SCALE) + 10);
+            int ty = bottom - 14;
+            ChatUi.roundedFill(g, x + (w - tw) / 2, ty, tw, 12, 0xE0302838);
+            ChatUi.buttonText(g, font, toast, x + w / 2f, ty + 6, ChatLayout.META_SCALE, 0xFFFFFFFF);
+        }
+    }
+
+    private static void grid(GuiGraphics g, Font font, List<Family> fams, int x, int y, int w, int bottom, int mx, int my) {
         int tw = w / CATS.length;
         for (int i = 0; i < CATS.length; i++) {
             int tx = x + i * tw;
@@ -148,11 +226,15 @@ public final class WardrobePage {
             HITS.add(new Hit(r, () -> { cat = idx; scroll = 0; }));
         }
         y += 13;
-        ChatUi.label(g, font, Component.translatable("mcphone.wardrobe.count", tr("cat." + CATS[cat]), items.size()).getString(),
-                x + 2, y + 3, ChatLayout.META_SCALE, FontPalette.subtle());
+        int total = 0, have = 0;
+        for (Family f : fams) for (ItemStack s : f.variants()) { total++; if (has(s)) have++; }
+        boolean ownable = slotOf(fams.isEmpty() ? ItemStack.EMPTY : fams.get(0).variants().get(0)) != null;
+        String count = Component.translatable("mcphone.wardrobe.count", tr("cat." + CATS[cat]), total).getString();
+        if (ownable && owned != null) count += " · " + Component.translatable("mcphone.wardrobe.have", have).getString();
+        ChatUi.label(g, font, count, x + 2, y + 3, ChatLayout.META_SCALE, FontPalette.subtle());
         y += 8;
 
-        if (items.isEmpty()) {
+        if (fams.isEmpty()) {
             ChatUi.label(g, font, tr("empty"), x + 4, y + 10, ChatLayout.META_SCALE, FontPalette.subtle());
             return;
         }
@@ -163,52 +245,70 @@ public final class WardrobePage {
         GuiUtil.enableScissor(g, x, listTop, x + w, bottom);
         try {
             int base = (int) (listTop - scroll);
-            for (int i = 0; i < items.size(); i++) {
+            for (int i = 0; i < fams.size(); i++) {
                 int cx = x + (i % cols) * (cw + gap), cy = base + (i / cols) * (ch + gap);
                 if (cy + ch < listTop || cy > bottom) continue;
+                Family f = fams.get(i);
+                ItemStack show = f.variants().get(pick(f));
+                boolean any = false;
+                for (ItemStack s : f.variants()) any |= has(s);
                 var r = new ChatLayout.Rect(cx, cy, cw, ch);
                 boolean inside = my >= listTop && my < bottom;
                 ChatUi.glass(g, ChatGlass.Surface.CARD, cx, cy, cw, ch, inside && r.contains(mx, my));
-                GuiUtil.drawItemIcon(g, items.get(i), cx + (cw - 16) / 2, cy + 3, 16);
-                String name = ChatUi.truncate(font, items.get(i).getHoverName().getString(), cw - 3, ChatLayout.META_SCALE);
-                ChatUi.buttonText(g, font, name, cx + cw / 2f, cy + 24, ChatLayout.META_SCALE, FontPalette.body());
-                if (inside) { int idx = i; HITS.add(new Hit(r, () -> { detail = idx; angle = 0; })); }
+                GuiUtil.drawItemIcon(g, show, cx + (cw - 16) / 2, cy + 3, 16);
+                boolean locked = ownable && owned != null && !any;
+                if (locked) {
+                    g.fill(cx + 1, cy + 1, cx + cw - 1, cy + ch - 1, 0x66101018);
+                    ChatUi.label(g, font, tr("locked"), cx + 2, cy + 4, 0.5f, 0xFFD0C8E0);
+                }
+                if (f.variants().size() > 1) {
+                    String n = Component.translatable("mcphone.wardrobe.colors", f.variants().size()).getString();
+                    ChatUi.label(g, font, n, cx + cw - 2 - ChatUi.width(font, n, 0.5f), cy + 4, 0.5f, ChatUi.accent());
+                }
+                String name = ChatUi.truncate(font, f.name(), cw - 3, ChatLayout.META_SCALE);
+                ChatUi.buttonText(g, font, name, cx + cw / 2f, cy + 24, ChatLayout.META_SCALE, locked ? FontPalette.subtle() : FontPalette.body());
+                if (inside) { int idx = i; HITS.add(new Hit(r, () -> { detail = idx; variant = pick(fams.get(idx)); angle = 0; })); }
             }
-            contentH = ((items.size() + cols - 1) / cols) * (ch + gap);
+            contentH = ((fams.size() + cols - 1) / cols) * (ch + gap);
         } finally { GuiUtil.disableScissor(g); }
     }
 
-    /** 내 치장: 지금 낀 것(칸별) + 가방에 있는 치장. 끼기/벗기는 서버 명령어(/치장 끼기·벗기)로 */
+    /** 내 치장: 지금 입은 것 + 옷장에 있는 것. 입기·벗기는 서버 옷장으로 */
     private static void mineList(GuiGraphics g, Font font, int x, int y, int w, int bottom, int mx, int my) {
         Minecraft mc = Minecraft.getInstance();
         var player = mc.player;
         if (player == null) return;
+        if (owned == null) {
+            ChatUi.label(g, font, tr(noMod ? "no_mod" : "loading"), x + 4, y + 8, ChatLayout.META_SCALE, FontPalette.subtle());
+            return;
+        }
         record Row(String header, ItemStack stack, String label, Runnable act, String actText) {}
         List<Row> rows = new ArrayList<>();
         rows.add(new Row(tr("worn"), null, null, null, null));
         int worn = 0;
-        for (int i = 0; i < WEAR.length; i++) {
-            net.minecraft.world.Container box = wornBox(player, WEAR[i]);
-            ItemStack st = box != null && box.getContainerSize() > 0 ? box.getItem(0) : ItemStack.EMPTY;
+        for (String slot : WEAR) {
+            ItemStack st = wornStack(slot);
             if (st.isEmpty()) continue;
             worn++;
-            String ko = WEAR_KO[i];
-            rows.add(new Row(null, st, ko, () -> command("치장 벗기 " + ko), tr("take_off")));
+            rows.add(new Row(null, st, tr("cat." + slot), () -> request(WardrobeWire.Kind.OFF, slot, 0), tr("take_off")));
         }
         if (worn == 0) rows.add(new Row(null, null, tr("worn_none"), null, null));
-        rows.add(new Row(tr("bag"), null, null, null, null));
-        int bag = 0;
-        var inv = player.getInventory().items;
-        for (int i = 0; i < inv.size(); i++) {
-            ItemStack st = inv.get(i);
-            if (st.isEmpty()) continue;
-            ResourceLocation id = BuiltInRegistries.ITEM.getKey(st.getItem());
-            if (!"pokicos".equals(id.getNamespace()) || slotOf(st) == null) continue;
-            bag++;
-            int slot = i;
-            rows.add(new Row(null, st, tr("cat." + id.getPath()), () -> command("치장 끼기 " + slot), tr("put_on")));
+        rows.add(new Row(Component.translatable("mcphone.wardrobe.closet", owned.size()).getString(), null, null, null, null));
+        int n = 0;
+        for (String c : WEAR) {
+            for (var e : ALL.entrySet()) {
+                if (!e.getKey().startsWith(c + ":") || !owned.contains(e.getKey())) continue;
+                ItemStack st = e.getValue();
+                if (worn(st)) continue;
+                n++;
+                int cmd = Integer.parseInt(e.getKey().substring(c.length() + 1));
+                rows.add(new Row(null, st, tr("cat." + c), () -> request(WardrobeWire.Kind.WEAR, c, cmd), tr("put_on")));
+            }
         }
-        if (bag == 0) rows.add(new Row(null, null, tr("bag_none"), null, null));
+        if (n == 0) rows.add(new Row(null, null, tr(owned.isEmpty() ? "closet_empty" : "closet_all_worn"), null, null));
+        int bag = 0;
+        for (ItemStack st : player.getInventory().items) if (!st.isEmpty() && slotOf(st) != null && "pokicos".equals(BuiltInRegistries.ITEM.getKey(st.getItem()).getNamespace())) bag++;
+        if (bag > 0) rows.add(new Row(null, null, Component.translatable("mcphone.wardrobe.bag_hint", bag).getString(), null, null));
 
         int rowH = 20, headH = 11;
         int total = 0;
@@ -224,7 +324,7 @@ public final class WardrobePage {
                     cy += headH; continue;
                 }
                 if (r.stack() == null) {
-                    ChatUi.label(g, font, r.label(), x + 4, cy + 5, ChatLayout.META_SCALE, FontPalette.subtle());
+                    ChatUi.label(g, font, ChatUi.truncate(font, r.label(), w - 8, ChatLayout.META_SCALE), x + 4, cy + 5, ChatLayout.META_SCALE, FontPalette.subtle());
                     cy += 12; continue;
                 }
                 if (cy + rowH >= y && cy <= bottom) {
@@ -245,12 +345,19 @@ public final class WardrobePage {
         } finally { GuiUtil.disableScissor(g); }
     }
 
-    private static void command(String cmd) {
-        long now = System.currentTimeMillis();
-        if (now - lastAct < 350) return;
-        lastAct = now;
+    /** 지금 그 칸에 입은 치장 (Accessories 본 칸) */
+    private static ItemStack wornStack(String slot) {
         var p = Minecraft.getInstance().player;
-        if (p != null) p.connection.sendCommand(cmd);
+        if (p == null) return ItemStack.EMPTY;
+        net.minecraft.world.Container box = wornBox(p, slot);
+        return box != null && box.getContainerSize() > 0 ? box.getItem(0) : ItemStack.EMPTY;
+    }
+
+    private static boolean worn(ItemStack s) {
+        String slot = slotOf(s);
+        if (slot == null) return false;
+        ItemStack w = wornStack(slot);
+        return !w.isEmpty() && keyOf(w).equals(keyOf(s));
     }
 
     private static net.minecraft.world.Container wornBox(net.minecraft.world.entity.LivingEntity e, String slot) {
@@ -269,10 +376,13 @@ public final class WardrobePage {
         }
     }
 
-    private static void detail(GuiGraphics g, Font font, List<ItemStack> items, int x, int y, int w, int bottom, int mx, int my) {
-        ItemStack stack = items.get(detail);
+    private static void detail(GuiGraphics g, Font font, List<Family> fams, int x, int y, int w, int bottom, int mx, int my) {
+        Family fam = fams.get(detail);
+        if (variant < 0 || variant >= fam.variants().size()) variant = 0;
+        ItemStack stack = fam.variants().get(variant);
         String slot = slotOf(stack);
         boolean canTry = slot != null;
+        boolean many = fam.variants().size() > 1;
         // 아이템만 / 입어보기
         if (canTry) {
             int hw = w / 2;
@@ -284,7 +394,8 @@ public final class WardrobePage {
             HITS.add(new Hit(b, () -> tryOn = true));
             y += 14;
         }
-        int boxH = Math.max(40, Math.min(w + 10, bottom - y - 34));
+        int below = (many ? 30 : 12) + 14 + 14;
+        int boxH = Math.max(40, Math.min(w + 10, bottom - y - below));
         ChatUi.glass(g, ChatGlass.Surface.CARD, x, y, w, boxH, false);
 
         long now = System.currentTimeMillis();
@@ -298,20 +409,62 @@ public final class WardrobePage {
         } finally { GuiUtil.disableScissor(g); }
         if (wearing) ChatUi.label(g, font, tr("fitting"), x + 4, y + 6, ChatLayout.META_SCALE, ChatUi.accent());
         ChatUi.buttonText(g, font, tr("drag"), x + w / 2f, y + boxH - 5, ChatLayout.META_SCALE, FontPalette.subtle());
-        y += boxH + 4;
+        y += boxH + 3;
 
-        ChatUi.buttonText(g, font, tr("note"), x + w / 2f, y + 4, ChatLayout.META_SCALE, FontPalette.subtle());
-        y += 11;
+        // 색 고르기
+        if (many) {
+            ChatUi.buttonText(g, font, variantName(stack), x + w / 2f, y + 4, ChatLayout.META_SCALE, FontPalette.body());
+            y += 9;
+            int n = fam.variants().size(), sz = 15, gap = 2;
+            int per = Math.max(1, (w + gap) / (sz + gap));
+            int rows = (n + per - 1) / per;
+            int rowY = y;
+            for (int i = 0; i < n; i++) {
+                int inRow = Math.min(per, n - (i / per) * per);
+                int rx = x + (w - (inRow * (sz + gap) - gap)) / 2 + (i % per) * (sz + gap);
+                int ry = rowY + (i / per) * (sz + gap);
+                var r = new ChatLayout.Rect(rx, ry, sz, sz);
+                ItemStack v = fam.variants().get(i);
+                boolean sel = i == variant;
+                if (sel) ChatUi.roundedFill(g, rx - 1, ry - 1, sz + 2, sz + 2, ChatUi.accent());
+                ChatUi.glass(g, ChatGlass.Surface.CARD, rx, ry, sz, sz, r.contains(mx, my));
+                GuiUtil.drawItemIcon(g, v, rx + 1, ry + 1, 13);
+                if (owned != null && !has(v)) g.fill(rx, ry, rx + sz, ry + sz, 0x77101018);
+                int idx = i;
+                HITS.add(new Hit(r, () -> variant = idx));
+            }
+            y += rows * (sz + gap) + 2;
+        }
 
-        // ◀ 2 / 20 ▶
-        int n = items.size();
+        // 입기 / 벗기 / 미보유
+        if (canTry) {
+            if (owned == null) {
+                ChatUi.buttonText(g, font, tr(noMod ? "no_mod" : "loading"), x + w / 2f, y + 6, ChatLayout.META_SCALE, FontPalette.subtle());
+            } else if (!has(stack)) {
+                ChatUi.buttonText(g, font, tr("locked_hint"), x + w / 2f, y + 6, ChatLayout.META_SCALE, FontPalette.subtle());
+            } else {
+                boolean on = worn(stack);
+                int bw = 50;
+                var br = new ChatLayout.Rect(x + (w - bw) / 2, y, bw, 12);
+                ChatUi.roundedFill(g, br.x(), br.y(), bw, 12, br.contains(mx, my) ? ChatUi.accent() : (on ? 0xFF8A7F99 : 0xFF6A5AA8));
+                ChatUi.buttonText(g, font, tr(on ? "take_off" : "put_on"), br.x() + bw / 2f, br.y() + 6, ChatLayout.META_SCALE, 0xFFFFFFFF);
+                int cmd = Integer.parseInt(keyOf(stack).substring(slot.length() + 1));
+                HITS.add(new Hit(br, on ? () -> request(WardrobeWire.Kind.OFF, slot, 0) : () -> request(WardrobeWire.Kind.WEAR, slot, cmd)));
+            }
+        } else {
+            ChatUi.buttonText(g, font, tr("note"), x + w / 2f, y + 6, ChatLayout.META_SCALE, FontPalette.subtle());
+        }
+        y += 14;
+
+        // ◀ 2 / 20 ▶ (디자인 넘기기)
+        int n = fams.size();
         ChatUi.buttonText(g, font, (detail + 1) + " / " + n, x + w / 2f, y + 6, ChatLayout.TEXT_SCALE, FontPalette.body());
         var prev = new ChatLayout.Rect(x, y, 20, 12);
         var next = new ChatLayout.Rect(x + w - 20, y, 20, 12);
         ChatUi.buttonText(g, font, "◀", x + 10, y + 6, ChatLayout.TEXT_SCALE, prev.contains(mx, my) ? ChatUi.accent() : FontPalette.body());
         ChatUi.buttonText(g, font, "▶", x + w - 10, y + 6, ChatLayout.TEXT_SCALE, next.contains(mx, my) ? ChatUi.accent() : FontPalette.body());
-        HITS.add(new Hit(prev, () -> { detail = (detail - 1 + n) % n; angle = 0; }));
-        HITS.add(new Hit(next, () -> { detail = (detail + 1) % n; angle = 0; }));
+        HITS.add(new Hit(prev, () -> { detail = (detail - 1 + n) % n; variant = pick(fams.get(detail)); angle = 0; }));
+        HITS.add(new Hit(next, () -> { detail = (detail + 1) % n; variant = pick(fams.get(detail)); angle = 0; }));
     }
 
     private static void seg(GuiGraphics g, Font font, ChatLayout.Rect r, String text, boolean on, int mx, int my) {
