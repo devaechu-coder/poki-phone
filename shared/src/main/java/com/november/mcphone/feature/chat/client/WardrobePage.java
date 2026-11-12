@@ -39,8 +39,8 @@ import java.util.regex.Pattern;
 public final class WardrobePage {
     /** 탭 순서 = 아이템 id (pokicos:<id>) */
     private static final String[] CATS = {"hat", "face", "back", "tail", "outfit", "lightstick"};
-    /** 전체 목록에서 뺄 한정템: "<id>:<번호>" (테스터 새싹, 포획 원정 모자, 관리자 제복 1·2) — 가지고 있으면 내 치장에는 나옴 */
-    private static final Set<String> HIDDEN = Set.of("hat:26", "hat:27", "outfit:3", "outfit:5");
+    /** 전체 목록에서 뺄 한정템: "<id>:<번호>" (테스터 새싹, 포획 원정 모자, 무지개 포키 모자(히든 업적), 관리자 제복 1·2) — 가지고 있으면 내 치장에는 나옴 */
+    private static final Set<String> HIDDEN = Set.of("hat:26", "hat:27", "hat:39", "outfit:3", "outfit:5");
     /** OP 한테만 보이는 것 (아직 공개 전): 머리 위 포키냥 */
     private static final Set<String> OP_ONLY = Set.of("hat:28");
     private static final String[] WEAR = {"hat", "face", "back", "tail", "outfit"};
