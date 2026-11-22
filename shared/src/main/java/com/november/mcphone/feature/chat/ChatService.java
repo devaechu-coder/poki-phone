@@ -263,6 +263,7 @@ public final class ChatService {
             friends.removeRequest(targetId, selfId);
             friends.addFriendship(selfId, targetId);
             rememberBoth(server, friends, selfId, targetId);
+            pokiNotify(server, targetId, com.november.mcphone.feature.chat.notice.FriendNotice.Kind.ACCEPTED, self);
             return FriendOutcome.OK;
         }
 
@@ -273,6 +274,7 @@ public final class ChatService {
             return FriendOutcome.PEER_INBOX_FULL;
         }
         rememberBoth(server, friends, selfId, targetId);
+        pokiNotify(server, targetId, com.november.mcphone.feature.chat.notice.FriendNotice.Kind.REQUEST, self);
         return FriendOutcome.OK;
     }
 
@@ -305,6 +307,7 @@ public final class ChatService {
         friends.removeRequest(requesterId, selfId);
         friends.addFriendship(selfId, requesterId);
         rememberBoth(self.level().getServer(), friends, selfId, requesterId);
+        pokiNotify(self.level().getServer(), requesterId, com.november.mcphone.feature.chat.notice.FriendNotice.Kind.ACCEPTED, self);
         return FriendOutcome.OK;
     }
 
@@ -367,6 +370,15 @@ public final class ChatService {
     }
 
     /** 建立关系时把双方的名字都记一遍，日后任一方离线都显示得出来 */
+    /** 포키: 받는 사람이 접속 중이면 친구 요청·수락 알림 (채팅 + 포키톡 팝업) */
+    private static void pokiNotify(MinecraftServer server, UUID targetId,
+                                   com.november.mcphone.feature.chat.notice.FriendNotice.Kind kind, ServerPlayer from) {
+        ServerPlayer target = server.getPlayerList().getPlayer(targetId);
+        if (target == null) return;
+        String name = resolveName(server, FriendData.get(server), from.getUUID(), from);
+        com.november.mcphone.feature.chat.notice.FriendNotice.send(target, kind, from.getUUID(), name);
+    }
+
     private static void rememberBoth(MinecraftServer server, FriendData friends,
                                      UUID a, UUID b) {
         friends.rememberName(a, ConversationSummary.clampName(rawName(server, friends, a, server.getPlayerList().getPlayer(a))));
