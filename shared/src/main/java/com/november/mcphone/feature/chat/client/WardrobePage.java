@@ -73,6 +73,10 @@ public final class WardrobePage {
     // 서버 옷장
     /** null = 아직 모름 (불러오는 중 / 서버에 옷장 기능 없음) */
     private static Set<String> owned;
+    /** 서버(운영진)가 '비공개'로 둔 치장 — 일반 유저 전체 목록에서 뺌 (가지고 있으면 보임). 답의 "!키" */
+    private static Set<String> hiddenSrv = Set.of();
+    /** 운영진에게만: 비공개인 치장 (전체 목록에 '비공개' 표시). 답의 "~키" */
+    private static Set<String> privateOp = Set.of();
     private static boolean noMod;
     private static long pendingAt;
     private static String toast = "";
@@ -96,12 +100,42 @@ public final class WardrobePage {
         catch (RuntimeException e) { noMod = true; }
     }
 
+    /** 답 목록 = 가진 키 + "!키"(비공개, 유저용) + "~키"(비공개, 운영진용 표시) */
+    private static void setOwned(List<String> list) {
+        Set<String> o = new HashSet<>(), h = new HashSet<>(), op = new HashSet<>();
+        for (String k : list) {
+            if (k.startsWith("!")) h.add(k.substring(1));
+            else if (k.startsWith("~")) op.add(k.substring(1));
+            else o.add(k);
+        }
+        owned = o; hiddenSrv = h; privateOp = op;
+    }
+
+    /** 전체 목록에서 비공개 색 빼기 (가진 건 남김). 다 빠진 묶음은 안 보임 */
+    private static List<Family> visible(List<Family> fams) {
+        if (hiddenSrv.isEmpty()) return fams;
+        List<Family> out = new ArrayList<>(fams.size());
+        for (Family f : fams) {
+            List<ItemStack> v = new ArrayList<>(f.variants().size());
+            for (ItemStack s : f.variants()) if (!hiddenSrv.contains(keyOf(s)) || has(s)) v.add(s);
+            if (v.size() == f.variants().size()) out.add(f);
+            else if (!v.isEmpty()) out.add(new Family(f.name(), v));
+        }
+        return out;
+    }
+
+    private static boolean isPrivate(Family f) {
+        if (privateOp.isEmpty()) return false;
+        for (ItemStack s : f.variants()) if (!privateOp.contains(keyOf(s))) return false;
+        return true;
+    }
+
     /** 서버 답 (네트워크 스레드 → 클라 메인에서 불림) */
     public static void accept(WardrobeWire.Reply r) {
         pendingAt = 0;
         switch (r.status()) {
-            case OK -> { owned = new HashSet<>(r.owned()); noMod = false; }
-            case ERROR -> { if (!r.owned().isEmpty() || owned == null) owned = new HashSet<>(r.owned()); say(r.message().isEmpty() ? tr("fail") : r.message()); }
+            case OK -> { setOwned(r.owned()); noMod = false; }
+            case ERROR -> { if (!r.owned().isEmpty() || owned == null) setOwned(r.owned()); say(r.message().isEmpty() ? tr("fail") : r.message()); }
             case NO_MOD -> noMod = true;
             default -> { }
         }
@@ -154,7 +188,7 @@ public final class WardrobePage {
 
     private static List<Family> current() {
         if (mine && mineDetail) return mineFams;
-        return FAMS.isEmpty() ? List.of() : FAMS.get(cat);
+        return FAMS.isEmpty() ? List.of() : visible(FAMS.get(cat));
     }
 
     /** 묶음에서 처음 보여줄 색: 입고 있는 것 → 가진 것 → 첫 번째 */
@@ -269,6 +303,7 @@ public final class WardrobePage {
                     g.fill(cx + 1, cy + 1, cx + cw - 1, cy + ch - 1, 0x66101018);
                     ChatUi.label(g, font, tr("locked"), cx + 2, cy + 4, 0.5f, 0xFFD0C8E0);
                 }
+                if (isPrivate(f)) ChatUi.label(g, font, tr("private"), cx + 2, cy + (locked ? 10 : 4), 0.5f, 0xFFFFB0B0);
                 if (f.variants().size() > 1) {
                     String n = Component.translatable("mcphone.wardrobe.colors", f.variants().size()).getString();
                     ChatUi.label(g, font, n, cx + cw - 2 - ChatUi.width(font, n, 0.5f), cy + 4, 0.5f, ChatUi.accent());

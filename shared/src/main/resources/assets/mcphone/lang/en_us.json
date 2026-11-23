@@ -816,6 +816,7 @@
   "mcphone.wardrobe.fail": "Couldn't do that",
   "mcphone.wardrobe.have": "%s owned",
   "mcphone.wardrobe.locked": "Locked",
+  "mcphone.wardrobe.private": "Hidden",
   "mcphone.wardrobe.colors": "%s colors",
   "mcphone.wardrobe.closet": "Closet (%s)",
   "mcphone.wardrobe.closet_empty": "Your closet is empty",

@@ -18,7 +18,7 @@ public final class WardrobeServer {
     private WardrobeServer() {}
     private static BiConsumer<ServerPlayer, WardrobeWire.Reply> reply;
     private static final Map<ServerPlayer, Long> LAST = new WeakHashMap<>();
-    private static Method owned, wear, off;
+    private static Method owned, wear, off, hidden;
     private static boolean looked;
 
     public static void install(BiConsumer<ServerPlayer, WardrobeWire.Reply> sender) { reply = sender; }
@@ -33,6 +33,7 @@ public final class WardrobeServer {
                     case "owned" -> owned = m;
                     case "wear" -> wear = m;
                     case "off" -> off = m;
+                    case "hidden" -> { if (m.getParameterCount() == 1) hidden = m; }
                     default -> { }
                 }
             }
@@ -61,7 +62,13 @@ public final class WardrobeServer {
                     case OFF -> off.invoke(null, player, q.slot().isEmpty() ? null : q.slot());
                     case LIST -> { }
                 }
-                @SuppressWarnings("unchecked") List<String> list = (List<String>) owned.invoke(null, player);
+                @SuppressWarnings("unchecked") List<String> list = new java.util.ArrayList<>((List<String>) owned.invoke(null, player));
+                // 비공개 치장: 유저 → "!키" (전체 목록에서 뺌), 운영진 → "~키" (다 보이고 '비공개' 표시)
+                if (hidden != null) {
+                    @SuppressWarnings("unchecked") List<String> h = (List<String>) hidden.invoke(null, player.getServer());
+                    String pre = player.hasPermissions(2) ? "~" : "!";
+                    for (String k : h) list.add(pre + k);
+                }
                 out = new WardrobeWire.Reply(q.request(), q.kind(), st, msg, list);
             } catch (Throwable t) {
                 MCphone.LOGGER.warn("[포키폰] 옷장 처리 실패: {}", t.toString());
