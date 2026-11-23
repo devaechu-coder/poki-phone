@@ -18,7 +18,7 @@ public final class WardrobeServer {
     private WardrobeServer() {}
     private static BiConsumer<ServerPlayer, WardrobeWire.Reply> reply;
     private static final Map<ServerPlayer, Long> LAST = new WeakHashMap<>();
-    private static Method owned, wear, off, hidden;
+    private static Method owned, wear, off, hidden, toggle;
     private static boolean looked;
 
     public static void install(BiConsumer<ServerPlayer, WardrobeWire.Reply> sender) { reply = sender; }
@@ -33,11 +33,17 @@ public final class WardrobeServer {
                     case "owned" -> owned = m;
                     case "wear" -> wear = m;
                     case "off" -> off = m;
-                    case "hidden" -> { if (m.getParameterCount() == 1) hidden = m; }
                     default -> { }
                 }
             }
             if (owned == null || wear == null || off == null) owned = null;
+            try {
+                Class<?> v = Class.forName("kr.devaechu.pokicosmetics.Visibility");
+                for (Method m : v.getMethods()) {
+                    if (m.getName().equals("hidden") && m.getParameterCount() == 1) hidden = m;
+                    if (m.getName().equals("toggle") && m.getParameterCount() == 2) toggle = m;
+                }
+            } catch (Throwable ignored) { }
         } catch (Throwable t) {
             MCphone.LOGGER.info("[포키폰] PokiCosmetics 옷장이 없어서 옷장 입기 꺼짐: {}", t.toString());
         }
@@ -60,6 +66,11 @@ public final class WardrobeServer {
                         if (err != null) { st = WardrobeWire.Status.ERROR; msg = err.toString(); }
                     }
                     case OFF -> off.invoke(null, player, q.slot().isEmpty() ? null : q.slot());
+                    case VIS -> {
+                        if (toggle == null || !player.hasPermissions(2)) { st = WardrobeWire.Status.FORBIDDEN; break; }
+                        boolean now = (Boolean) toggle.invoke(null, player.getServer(), q.slot() + ":" + q.cmd());
+                        msg = now ? "비공개로 바꿨어요 (유저 전체 목록에서 숨김)" : "공개로 바꿨어요";
+                    }
                     case LIST -> { }
                 }
                 @SuppressWarnings("unchecked") List<String> list = new java.util.ArrayList<>((List<String>) owned.invoke(null, player));

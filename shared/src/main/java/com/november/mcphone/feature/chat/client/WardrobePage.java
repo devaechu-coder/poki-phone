@@ -124,6 +124,11 @@ public final class WardrobePage {
         return out;
     }
 
+    private static boolean isOp() {
+        var p = Minecraft.getInstance().player;
+        return p != null && p.hasPermissions(2);
+    }
+
     private static boolean isPrivate(Family f) {
         if (privateOp.isEmpty()) return false;
         for (ItemStack s : f.variants()) if (!privateOp.contains(keyOf(s))) return false;
@@ -134,7 +139,7 @@ public final class WardrobePage {
     public static void accept(WardrobeWire.Reply r) {
         pendingAt = 0;
         switch (r.status()) {
-            case OK -> { setOwned(r.owned()); noMod = false; }
+            case OK -> { setOwned(r.owned()); noMod = false; if (!r.message().isEmpty()) say(r.message()); }
             case ERROR -> { if (!r.owned().isEmpty() || owned == null) setOwned(r.owned()); say(r.message().isEmpty() ? tr("fail") : r.message()); }
             case NO_MOD -> noMod = true;
             default -> { }
@@ -304,6 +309,7 @@ public final class WardrobePage {
                     ChatUi.label(g, font, tr("locked"), cx + 2, cy + 4, 0.5f, 0xFFD0C8E0);
                 }
                 if (isPrivate(f)) ChatUi.label(g, font, tr("private"), cx + 2, cy + (locked ? 10 : 4), 0.5f, 0xFFFFB0B0);
+                if (isOp()) { String k = keyOf(show); ChatUi.label(g, font, "#" + k.substring(k.indexOf(':') + 1), cx + 2, cy + 16, 0.5f, FontPalette.subtle()); }
                 if (f.variants().size() > 1) {
                     String n = Component.translatable("mcphone.wardrobe.colors", f.variants().size()).getString();
                     ChatUi.label(g, font, n, cx + cw - 2 - ChatUi.width(font, n, 0.5f), cy + 4, 0.5f, ChatUi.accent());
@@ -503,6 +509,19 @@ public final class WardrobePage {
             else spin(g, stack, x + w / 2f, y + (boxH - 10) / 2f, w, boxH - 10);
         } finally { GuiUtil.disableScissor(g); }
         if (wearing) ChatUi.label(g, font, tr("fitting"), x + 4, y + 6, ChatLayout.META_SCALE, ChatUi.accent());
+        // 운영진: 번호 + 공개/비공개 바꾸기
+        if (isOp() && owned != null) {
+            String key = keyOf(stack);
+            String id = key.substring(0, key.indexOf(':'));
+            int num = Integer.parseInt(key.substring(key.indexOf(':') + 1));
+            boolean hid = privateOp.contains(key);
+            ChatUi.label(g, font, "#" + num, x + 4, y + (wearing ? 14 : 6), ChatLayout.META_SCALE, FontPalette.subtle());
+            int bw = 34;
+            var vr = new ChatLayout.Rect(x + w - bw - 2, y + 2, bw, 10);
+            ChatUi.roundedFill(g, vr.x(), vr.y(), bw, 10, vr.contains(mx, my) ? ChatUi.accent() : (hid ? 0xFFB04A5A : 0xFF4A8A6A));
+            ChatUi.buttonText(g, font, tr(hid ? "private" : "public"), vr.x() + bw / 2f, vr.y() + 5, 0.5f, 0xFFFFFFFF);
+            HITS.add(new Hit(vr, () -> request(WardrobeWire.Kind.VIS, id, num)));
+        }
         ChatUi.buttonText(g, font, tr("drag"), x + w / 2f, y + boxH - 5, ChatLayout.META_SCALE, FontPalette.subtle());
         y += boxH + 3;
 

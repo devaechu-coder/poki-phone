@@ -627,6 +627,7 @@
   "mcphone.wardrobe.have": "%s개 보유",
   "mcphone.wardrobe.locked": "미보유",
   "mcphone.wardrobe.private": "비공개",
+  "mcphone.wardrobe.public": "공개",
   "mcphone.wardrobe.colors": "%s색",
   "mcphone.wardrobe.closet": "옷장 (%s개)",
   "mcphone.wardrobe.closet_empty": "옷장이 비어 있어요",

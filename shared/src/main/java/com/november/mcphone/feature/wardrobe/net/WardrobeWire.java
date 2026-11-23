@@ -11,8 +11,8 @@ import java.util.UUID;
 public final class WardrobeWire {
     private WardrobeWire() {}
 
-    /** LIST 옷장 목록 · WEAR 입기(slot, cmd) · OFF 벗기(slot) */
-    public enum Kind { LIST, WEAR, OFF }
+    /** LIST 옷장 목록 · WEAR 입기(slot, cmd) · OFF 벗기(slot) · VIS 운영진: 공개↔비공개(slot=아이템 id, cmd) */
+    public enum Kind { LIST, WEAR, OFF, VIS }
     public enum Status { OK, ERROR, NO_MOD, FORBIDDEN, BUSY }
 
     public record Query(UUID request, Kind kind, String slot, int cmd) {
