@@ -574,5 +574,10 @@
   "mcphone.script.client_function.failed": "操作未完成，页面数据已保留。详情见客户端日志。",
   "mcphone.script.initialization.failed": "页面初始化未完成，已保留默认值。详情见客户端日志。",
   "mcphone.script.http_callback.failed": "响应处理未完成，页面数据已保留。详情见客户端日志。",
-  "mcphone.script.open_url.failed": "无法打开网页，请检查系统默认浏览器。"
+  "mcphone.script.open_url.failed": "无法打开网页，请检查系统默认浏览器。",
+  "mcphone.wardrobe.tap_off": "点击脱下",
+  "mcphone.wardrobe.closet_short": "衣柜",
+  "mcphone.wardrobe.tap_detail": "点击选颜色·穿戴",
+  "mcphone.wardrobe.wearing": "穿着",
+  "mcphone.wardrobe.closet_cat_empty": "这一类还没有"
 }

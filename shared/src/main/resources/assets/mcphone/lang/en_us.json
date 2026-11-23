@@ -823,5 +823,10 @@
   "mcphone.wardrobe.bag_hint": "%s unregistered in your bag · right-click to register",
   "mcphone.wardrobe.no_mod": "The server has no closet yet",
   "mcphone.wardrobe.loading": "Loading closet…",
-  "mcphone.wardrobe.locked_hint": "Not owned · right-click the item to register"
+  "mcphone.wardrobe.locked_hint": "Not owned · right-click the item to register",
+  "mcphone.wardrobe.tap_off": "tap to take off",
+  "mcphone.wardrobe.closet_short": "Closet",
+  "mcphone.wardrobe.tap_detail": "tap to pick color · wear",
+  "mcphone.wardrobe.wearing": "on",
+  "mcphone.wardrobe.closet_cat_empty": "None of this kind yet"
 }

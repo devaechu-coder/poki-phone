@@ -61,6 +61,11 @@ public final class WardrobePage {
     private static boolean tryOn = true;
     /** true 면 '내 치장' (옷장에 있는 것 · 입은 것) */
     private static boolean mine;
+    /** 내 치장 카테고리: 0 = 전체, 1.. = WEAR[i-1] */
+    private static int mineCat;
+    /** 내 치장 격자에서 연 상세 (그때 보이던 묶음 목록) */
+    private static List<Family> mineFams = List.of();
+    private static boolean mineDetail;
     private static long lastFrame, lastDrag;
     private record Hit(ChatLayout.Rect r, Runnable run) {}
     private static final List<Hit> HITS = new ArrayList<>();
@@ -76,12 +81,12 @@ public final class WardrobePage {
     private static String tr(String k) { return Component.translatable("mcphone.wardrobe." + k).getString(); }
 
     public static void open() {
-        detail = -1; scroll = 0; angle = 0; FITS.clear();
+        detail = -1; mineDetail = false; scroll = 0; angle = 0; FITS.clear();
         load();
         request(WardrobeWire.Kind.LIST, "", 0);
     }
 
-    public static void close() { HITS.clear(); detail = -1; }
+    public static void close() { HITS.clear(); detail = -1; mineDetail = false; }
 
     private static void request(WardrobeWire.Kind kind, String slot, int cmd) {
         long now = System.currentTimeMillis();
@@ -147,7 +152,10 @@ public final class WardrobePage {
         return -1;
     }
 
-    private static List<Family> current() { return FAMS.isEmpty() ? List.of() : FAMS.get(cat); }
+    private static List<Family> current() {
+        if (mine && mineDetail) return mineFams;
+        return FAMS.isEmpty() ? List.of() : FAMS.get(cat);
+    }
 
     /** 묶음에서 처음 보여줄 색: 입고 있는 것 → 가진 것 → 첫 번째 */
     private static int pick(Family f) {
@@ -163,7 +171,7 @@ public final class WardrobePage {
 
     /** 뒤로: 상세면 목록으로. false 면 홈으로 */
     public static boolean back() {
-        if (detail >= 0) { detail = -1; return true; }
+        if (detail >= 0) { detail = -1; mineDetail = false; return true; }
         return false;
     }
 
@@ -197,7 +205,7 @@ public final class WardrobePage {
             var b = new ChatLayout.Rect(x + hw, y, w - hw, 11);
             seg(g, font, a, tr("all"), !mine, mx, my);
             seg(g, font, b, tr("mine"), mine, mx, my);
-            HITS.add(new Hit(a, () -> { mine = false; scroll = 0; }));
+            HITS.add(new Hit(a, () -> { mine = false; mineDetail = false; scroll = 0; }));
             HITS.add(new Hit(b, () -> { mine = true; scroll = 0; }));
             y += 14;
             if (mine) mineList(g, font, x, y, w, bottom, mx, my);
@@ -273,7 +281,35 @@ public final class WardrobePage {
         } finally { GuiUtil.disableScissor(g); }
     }
 
-    /** 내 치장: 지금 입은 것 + 옷장에 있는 것. 입기·벗기는 서버 옷장으로 */
+    /** 내 치장 묶음: 하나라도 가진 묶음 (색은 전부 — 상세에서 미보유 색은 흐리게) + 전체 목록에 없는 한정템 */
+    private static List<Family> ownedFams(String slot) {
+        List<Family> out = new ArrayList<>();
+        if (owned == null) return out;
+        Set<String> seen = new HashSet<>();
+        for (String c : WEAR) {
+            if (slot != null && !slot.equals(c)) continue;
+            int ci = indexOf(c);
+            if (ci >= 0 && ci < FAMS.size()) {
+                for (Family f : FAMS.get(ci)) {
+                    boolean any = false;
+                    for (ItemStack v : f.variants()) { seen.add(keyOf(v)); any |= has(v); }
+                    if (any) out.add(f);
+                }
+            }
+            for (var e : ALL.entrySet()) {
+                if (!e.getKey().startsWith(c + ":") || seen.contains(e.getKey()) || !owned.contains(e.getKey())) continue;
+                out.add(new Family(e.getValue().getHoverName().getString(), List.of(e.getValue())));
+            }
+        }
+        return out;
+    }
+
+    private static boolean anyWorn(Family f) {
+        for (ItemStack v : f.variants()) if (worn(v)) return true;
+        return false;
+    }
+
+    /** 내 치장: 위에 입은 것 한 줄 + 카테고리 + 가진 치장 격자 (누르면 상세에서 색 고르고 입기) */
     private static void mineList(GuiGraphics g, Font font, int x, int y, int w, int bottom, int mx, int my) {
         Minecraft mc = Minecraft.getInstance();
         var player = mc.player;
@@ -282,66 +318,90 @@ public final class WardrobePage {
             ChatUi.label(g, font, tr(noMod ? "no_mod" : "loading"), x + 4, y + 8, ChatLayout.META_SCALE, FontPalette.subtle());
             return;
         }
-        record Row(String header, ItemStack stack, String label, Runnable act, String actText) {}
-        List<Row> rows = new ArrayList<>();
-        rows.add(new Row(tr("worn"), null, null, null, null));
-        int worn = 0;
-        for (String slot : WEAR) {
+        // 입고 있는 것 (누르면 벗기)
+        ChatUi.label(g, font, tr("worn") + " · " + tr("tap_off"), x + 2, y + 3, ChatLayout.META_SCALE, ChatUi.accent());
+        y += 8;
+        int ww = w / WEAR.length, wh = 24;
+        for (int i = 0; i < WEAR.length; i++) {
+            String slot = WEAR[i];
+            int wx = x + i * ww;
             ItemStack st = wornStack(slot);
-            if (st.isEmpty()) continue;
-            worn++;
-            rows.add(new Row(null, st, tr("cat." + slot), () -> request(WardrobeWire.Kind.OFF, slot, 0), tr("take_off")));
-        }
-        if (worn == 0) rows.add(new Row(null, null, tr("worn_none"), null, null));
-        rows.add(new Row(Component.translatable("mcphone.wardrobe.closet", owned.size()).getString(), null, null, null, null));
-        int n = 0;
-        for (String c : WEAR) {
-            for (var e : ALL.entrySet()) {
-                if (!e.getKey().startsWith(c + ":") || !owned.contains(e.getKey())) continue;
-                ItemStack st = e.getValue();
-                if (worn(st)) continue;
-                n++;
-                int cmd = Integer.parseInt(e.getKey().substring(c.length() + 1));
-                rows.add(new Row(null, st, tr("cat." + c), () -> request(WardrobeWire.Kind.WEAR, c, cmd), tr("put_on")));
+            var r = new ChatLayout.Rect(wx, y, ww - 2, wh);
+            ChatUi.glass(g, ChatGlass.Surface.CARD, wx, y, ww - 2, wh, !st.isEmpty() && r.contains(mx, my));
+            if (!st.isEmpty()) {
+                GuiUtil.drawItemIcon(g, st, wx + (ww - 2 - 16) / 2, y + 1, 16);
+                HITS.add(new Hit(r, () -> request(WardrobeWire.Kind.OFF, slot, 0)));
             }
+            ChatUi.buttonText(g, font, tr("cat." + slot), wx + (ww - 2) / 2f, y + 20, 0.5f, st.isEmpty() ? FontPalette.subtle() : FontPalette.body());
         }
-        if (n == 0) rows.add(new Row(null, null, tr(owned.isEmpty() ? "closet_empty" : "closet_all_worn"), null, null));
+        y += wh + 3;
+
+        // 카테고리 (전체 + 칸별)
+        int tabs = WEAR.length + 1, tw = w / tabs;
+        for (int i = 0; i < tabs; i++) {
+            int tx = x + i * tw;
+            var r = new ChatLayout.Rect(tx, y, tw - 1, 10);
+            boolean on = i == mineCat;
+            if (on) ChatUi.roundedFill(g, tx, y, tw - 1, 10, ChatUi.accent());
+            else ChatUi.glass(g, ChatGlass.Surface.CARD, tx, y, tw - 1, 10, r.contains(mx, my));
+            String label = i == 0 ? tr("all") : tr("cat." + WEAR[i - 1]);
+            ChatUi.buttonText(g, font, label, tx + (tw - 1) / 2f, y + 5, ChatLayout.META_SCALE, on ? 0xFFFFFFFF : FontPalette.body());
+            int idx = i;
+            HITS.add(new Hit(r, () -> { mineCat = idx; scroll = 0; }));
+        }
+        y += 13;
+
+        List<Family> fams = ownedFams(mineCat == 0 ? null : WEAR[mineCat - 1]);
+        int items = 0;
+        for (Family f : fams) for (ItemStack v : f.variants()) if (has(v)) items++;
+        String head = Component.translatable("mcphone.wardrobe.count", mineCat == 0 ? tr("closet_short") : tr("cat." + WEAR[mineCat - 1]), items).getString()
+                + " · " + tr("tap_detail");
+        ChatUi.label(g, font, head, x + 2, y + 3, ChatLayout.META_SCALE, FontPalette.subtle());
+        y += 8;
+
         int bag = 0;
         for (ItemStack st : player.getInventory().items) if (!st.isEmpty() && slotOf(st) != null && "pokicos".equals(BuiltInRegistries.ITEM.getKey(st.getItem()).getNamespace())) bag++;
-        if (bag > 0) rows.add(new Row(null, null, Component.translatable("mcphone.wardrobe.bag_hint", bag).getString(), null, null));
+        int listBottom = bag > 0 ? bottom - 11 : bottom;
+        if (bag > 0) {
+            String hint = ChatUi.truncate(font, Component.translatable("mcphone.wardrobe.bag_hint", bag).getString(), w - 4, 0.5f);
+            ChatUi.label(g, font, hint, x + 2, bottom - 6, 0.5f, FontPalette.subtle());
+        }
 
-        int rowH = 20, headH = 11;
-        int total = 0;
-        for (Row r : rows) total += r.header() != null ? headH : (r.stack() == null ? 12 : rowH + 2);
-        viewH = bottom - y; contentH = total;
+        if (fams.isEmpty()) {
+            ChatUi.label(g, font, tr(owned.isEmpty() ? "closet_empty" : "closet_cat_empty"), x + 4, y + 10, ChatLayout.META_SCALE, FontPalette.subtle());
+            return;
+        }
+        viewH = listBottom - y;
         scroll = Math.max(0, Math.min(scroll, Math.max(0, contentH - viewH)));
-        GuiUtil.enableScissor(g, x, y, x + w, bottom);
+        int cols = 3, gap = 2, cw = (w - gap * (cols - 1)) / cols, ch = 30;
+        int listTop = y;
+        GuiUtil.enableScissor(g, x, listTop, x + w, listBottom);
         try {
-            int cy = (int) (y - scroll);
-            for (Row r : rows) {
-                if (r.header() != null) {
-                    ChatUi.label(g, font, r.header(), x + 2, cy + 6, ChatLayout.META_SCALE, ChatUi.accent());
-                    cy += headH; continue;
+            int base = (int) (listTop - scroll);
+            for (int i = 0; i < fams.size(); i++) {
+                int cx = x + (i % cols) * (cw + gap), cy = base + (i / cols) * (ch + gap);
+                if (cy + ch < listTop || cy > listBottom) continue;
+                Family f = fams.get(i);
+                ItemStack show = f.variants().get(pick(f));
+                var r = new ChatLayout.Rect(cx, cy, cw, ch);
+                boolean inside = my >= listTop && my < listBottom;
+                ChatUi.glass(g, ChatGlass.Surface.CARD, cx, cy, cw, ch, inside && r.contains(mx, my));
+                GuiUtil.drawItemIcon(g, show, cx + (cw - 16) / 2, cy + 3, 16);
+                if (anyWorn(f)) ChatUi.label(g, font, "● " + tr("wearing"), cx + 2, cy + 4, 0.5f, ChatUi.accent());
+                if (f.variants().size() > 1) {
+                    int have = 0;
+                    for (ItemStack v : f.variants()) if (has(v)) have++;
+                    String n = have + "/" + f.variants().size();
+                    ChatUi.label(g, font, n, cx + cw - 2 - ChatUi.width(font, n, 0.5f), cy + 4, 0.5f, ChatUi.accent());
                 }
-                if (r.stack() == null) {
-                    ChatUi.label(g, font, ChatUi.truncate(font, r.label(), w - 8, ChatLayout.META_SCALE), x + 4, cy + 5, ChatLayout.META_SCALE, FontPalette.subtle());
-                    cy += 12; continue;
+                String name = ChatUi.truncate(font, f.name(), cw - 3, ChatLayout.META_SCALE);
+                ChatUi.buttonText(g, font, name, cx + cw / 2f, cy + 24, ChatLayout.META_SCALE, FontPalette.body());
+                if (inside) {
+                    int idx = i;
+                    HITS.add(new Hit(r, () -> { mineFams = fams; mineDetail = true; detail = idx; variant = pick(fams.get(idx)); angle = 0; }));
                 }
-                if (cy + rowH >= y && cy <= bottom) {
-                    ChatUi.glass(g, ChatGlass.Surface.CARD, x, cy, w, rowH, false);
-                    GuiUtil.drawItemIcon(g, r.stack(), x + 2, cy + 2, 16);
-                    int bw = 22;
-                    String name = ChatUi.truncate(font, r.stack().getHoverName().getString(), w - 24 - bw - 4, ChatLayout.META_SCALE);
-                    ChatUi.label(g, font, name, x + 21, cy + 7, ChatLayout.META_SCALE, FontPalette.body());
-                    ChatUi.label(g, font, r.label(), x + 21, cy + 14, ChatLayout.META_SCALE, FontPalette.subtle());
-                    var br = new ChatLayout.Rect(x + w - bw - 2, cy + 4, bw, 12);
-                    boolean in = my >= y && my < bottom && br.contains(mx, my);
-                    ChatUi.roundedFill(g, br.x(), br.y(), br.width(), br.height(), in ? ChatUi.accent() : 0xFF6A5AA8);
-                    ChatUi.buttonText(g, font, r.actText(), br.x() + br.width() / 2f, br.y() + br.height() / 2f, ChatLayout.META_SCALE, 0xFFFFFFFF);
-                    if (my >= y && my < bottom) HITS.add(new Hit(br, r.act()));
-                }
-                cy += rowH + 2;
             }
+            contentH = ((fams.size() + cols - 1) / cols) * (ch + gap);
         } finally { GuiUtil.disableScissor(g); }
     }
 

@@ -633,5 +633,10 @@
   "mcphone.wardrobe.bag_hint": "가방에 등록 안 한 치장 %s개 · 들고 우클릭하면 등록돼요",
   "mcphone.wardrobe.no_mod": "서버 옷장 기능이 아직 없어요",
   "mcphone.wardrobe.loading": "옷장 불러오는 중…",
-  "mcphone.wardrobe.locked_hint": "미보유 · 얻으면 우클릭으로 옷장에 등록"
+  "mcphone.wardrobe.locked_hint": "미보유 · 얻으면 우클릭으로 옷장에 등록",
+  "mcphone.wardrobe.tap_off": "눌러서 벗기",
+  "mcphone.wardrobe.closet_short": "옷장",
+  "mcphone.wardrobe.tap_detail": "눌러서 색 고르기·입기",
+  "mcphone.wardrobe.wearing": "착용",
+  "mcphone.wardrobe.closet_cat_empty": "이 종류는 아직 없어요"
 }
