@@ -68,8 +68,8 @@ public final class WardrobeServer {
                     case OFF -> off.invoke(null, player, q.slot().isEmpty() ? null : q.slot());
                     case VIS -> {
                         if (toggle == null || !player.hasPermissions(2)) { st = WardrobeWire.Status.FORBIDDEN; break; }
-                        boolean now = (Boolean) toggle.invoke(null, player.getServer(), q.slot() + ":" + q.cmd());
-                        msg = now ? "비공개로 바꿨어요 (유저 전체 목록에서 숨김)" : "공개로 바꿨어요";
+                        boolean hid = (Boolean) toggle.invoke(null, player.getServer(), q.slot() + ":" + q.cmd());
+                        msg = hid ? "비공개로 바꿨어요 (유저 전체 목록에서 숨김)" : "공개로 바꿨어요";
                     }
                     case LIST -> { }
                 }
