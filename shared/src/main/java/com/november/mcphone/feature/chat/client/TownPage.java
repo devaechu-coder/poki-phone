@@ -516,6 +516,12 @@ public final class TownPage {
     private static void detail(GuiGraphics g, Font font, int x, int y, int w, int bottom, int mx, int my) {
         if (other == null) return;
         y = townCard(g, font, other, x, y, w, true) + 4;
+        // 운영진: 그 마을 스폰으로 바로 이동
+        if (op && other.hasSpawn()) {
+            TownRow t = other;
+            button(g, font, new ChatLayout.Rect(x, y, w, 14), "이 마을 스폰으로 이동", 0xFF6A5AA8, mx, my, () -> act("spawn_town", t.name()));
+            y += 17;
+        }
         if (otherMembers.isEmpty()) { meta(g, font, request != null ? "불러오는 중…" : "", x + 4, y + 4, FontPalette.subtle()); return; }
         people(g, font, x, y, w, bottom, mx, my, otherMembers, false, op);
     }
