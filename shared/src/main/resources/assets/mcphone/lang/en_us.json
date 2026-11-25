@@ -721,6 +721,8 @@
   "mcphone.wardrobe.try_on": "Try on",
   "mcphone.wardrobe.fitting": "Fitting",
   "mcphone.app.support": "Support",
+  "mcphone.app.town": "Town",
+  "mcphone.town.name_hint": "Player name",
   "mcphone.support.title.home": "고객센터",
   "mcphone.support.title.ask": "문의하기",
   "mcphone.support.title.report": "신고하기",

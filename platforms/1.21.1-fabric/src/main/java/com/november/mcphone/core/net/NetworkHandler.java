@@ -145,6 +145,7 @@ public final class NetworkHandler {
         com.november.mcphone.feature.wardrobe.net.WardrobeNetworking.register();
         com.november.mcphone.feature.chat.notice.FriendNoticeNetworking.register();
         com.november.mcphone.feature.call.CallNetworking.register();
+        com.november.mcphone.feature.town.net.TownNetworking.register();
     }
 
     //  处理函数
