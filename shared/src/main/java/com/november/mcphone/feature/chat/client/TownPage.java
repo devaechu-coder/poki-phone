@@ -386,7 +386,7 @@ public final class TownPage {
 
     private static void withName(java.util.function.Consumer<String> run) {
         String n = nameBox.query().trim();
-        if (!n.matches("[A-Za-z0-9_.]{1,20}")) { say("마크닉(영어 이름)을 적어 주세요", true); return; }
+        if (n.isEmpty() || n.length() > 20) { say("한글닉이나 마크닉을 적어 주세요", true); return; }
         nameBox.reset();
         run.accept(n);
     }

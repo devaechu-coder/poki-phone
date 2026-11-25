@@ -131,7 +131,13 @@ public final class TownServer {
             }
             case TOWN -> lines.addAll(nicks(call("town", me, q.a())));
             case ACT -> {
-                String r = call("act", me, q.a(), q.b());
+                String target = q.b();
+                if (q.a().equals("invite") || q.a().equals("trust_add")) {
+                    String[] res = resolve(player.server, target);
+                    if (res[0] == null) return new TownWire.Reply(q.request(), q.kind(), TownWire.Status.ERROR, res[1], List.of());
+                    target = res[0];
+                }
+                String r = call("act", me, q.a(), target);
                 if (r == null || !r.startsWith("OK")) { st = TownWire.Status.ERROR; msg = r == null ? "" : r.replaceFirst("^ERR:", ""); }
             }
             case SWITCH -> {
@@ -140,6 +146,34 @@ public final class TownServer {
             }
         }
         return new TownWire.Reply(q.request(), q.kind(), st, msg, lines);
+    }
+
+    /**
+     * 입력한 이름 → 마크닉. 마크닉(서버에 들어온 적 있는 사람)이면 그대로, 아니면 한글닉으로 찾음.
+     * {마크닉, null} 또는 {null, 안내 문구}
+     */
+    static String[] resolve(MinecraftServer s, String in) {
+        String t = in == null ? "" : in.trim();
+        if (t.isEmpty()) return new String[]{null, "이름을 적어 주세요"};
+        if (t.matches("[A-Za-z0-9_.]{1,20}")) {
+            if (s.getPlayerList().getPlayerByName(t) != null) return new String[]{t, null};
+            var cache = s.getProfileCache();
+            if (cache != null && cache.get(t).isPresent()) return new String[]{cache.get(t).get().getName(), null};
+        }
+        List<UUID> ids = PokiNames.findByNick(t);
+        if (ids.size() > 1) return new String[]{null, "같은 한글닉이 여러 명이에요 · 마크닉으로 적어 주세요"};
+        if (ids.size() == 1) {
+            ServerPlayer on = s.getPlayerList().getPlayer(ids.get(0));
+            if (on != null) return new String[]{on.getGameProfile().getName(), null};
+            var cache = s.getProfileCache();
+            if (cache != null) {
+                var gp = cache.get(ids.get(0));
+                if (gp.isPresent()) return new String[]{gp.get().getName(), null};
+            }
+        }
+        // 마크닉 모양이면 Towny 에 그대로 넘김 (처음 보는 사람이면 Towny 가 채팅으로 알려줌)
+        if (t.matches("[A-Za-z0-9_.]{1,20}")) return new String[]{t, null};
+        return new String[]{null, "'" + t + "' 한글닉을 가진 사람을 못 찾았어요"};
     }
 
     /** 마을 상세 줄: T 줄은 이장 한글닉, R·A 줄은 그 사람 한글닉을 맨 끝 칸에 */

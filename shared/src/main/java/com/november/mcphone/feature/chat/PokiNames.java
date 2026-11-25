@@ -28,6 +28,18 @@ public final class PokiNames {
         return n == null || n.isBlank() ? fallback : n;
     }
 
+    /** 한글닉으로 사람 찾기 (띄어쓰기·대소문자 무시, 색 코드 뺀 글씨 기준). 여러 명이면 전부 */
+    public static java.util.List<UUID> findByNick(String nick) {
+        java.util.List<UUID> out = new java.util.ArrayList<>();
+        if (nick == null) return out;
+        String want = norm(nick);
+        if (want.isEmpty()) return out;
+        for (Map.Entry<UUID, String> e : current().entrySet()) if (norm(e.getValue()).equals(want)) out.add(e.getKey());
+        return out;
+    }
+
+    private static String norm(String s) { return strip(s).replace(" ", "").toLowerCase(java.util.Locale.ROOT); }
+
     private static synchronized Map<UUID, String> current() {
         long now = System.currentTimeMillis();
         if (now - lastCheck < CHECK_MS) return nicks;
